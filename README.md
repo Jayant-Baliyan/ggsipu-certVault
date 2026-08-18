@@ -8,9 +8,9 @@
 
 ## 🌟 Executive Summary
 
-Every academic year, GGSIPU's Directorate of Students' Welfare and its various University Schools (USICT, USMS, USLLS, USCT, etc.) issue thousands of certificates for hackathons, workshops, FDPs, industrial training, events, and academic achievements. Previously, these were manually produced via mail-merge, physically signed, and manually verified via email or telephone when requested by employers or institutions.
+Every academic year, GGSIPU's Directorate of Students' Welfare and its various University Schools (USICT, USMS, USLLS, USCT, etc.) issue thousands of certificates for hackathons, workshops, FDPs, industrial training, events, and academic achievements.
 
-**GGSIPU CertVault** solves this with a **zero-infrastructure cost, lightweight, blockchain-compatible certificate lifecycle platform** that runs natively on GGSIPU's existing Google Workspace domain.
+**GGSIPU CertVault** provides a **zero-infrastructure cost, lightweight, blockchain-compatible certificate lifecycle platform** that runs natively on GGSIPU's existing Google Workspace domain with enterprise-grade cryptographic verification, complete state machine security, and automated approval workflows.
 
 ---
 
@@ -25,6 +25,7 @@ Every academic year, GGSIPU's Directorate of Students' Welfare and its various U
  │  - Bulk CSV Uploader         │  - Certificate ID Lookup Search Bar                 │
  │  - Multi-stage Approvals     │  - PDF File Drag-and-Drop Hash Verification        │
  │  - Revocation & Audit Logs   │  - Blockchain Cryptographic Proof Inspector        │
+ │  - API Key Access Control    │  - Public Open Access (No login required)          │
  └──────────────┬───────────────┴─────────────────────────┬──────────────────────────┘
                 │                                         │
                 │ REST API / Apps Script `doGet` & `doPost` │
@@ -32,19 +33,18 @@ Every academic year, GGSIPU's Directorate of Students' Welfare and its various U
  ┌───────────────────────────────────────────────────────────────────────────────────┐
  │                   GOOGLE APPS SCRIPT BACKEND (CORE ENGINE)                        │
  ├───────────────────────────────────────────────────────────────────────────────────┤
- │  - `Code.gs`: API Routing & Service Controller                                    │
+ │  - `Code.gs`: API Routing, Authentication & Integrity Controller                  │
  │  - `CryptoEngine.gs`: SHA-256 Certificate Hashing & Merkle Root Builder           │
- │  - `CertGenerator.gs`: Slides/Docs PDF Generation Engine & QR Embedder           │
- │  - `ApprovalWorkflow.gs`: Draft -> Pending -> Approved -> Issued State Machine    │
- │  - `EmailDispatcher.gs`: Gmail API Email Delivery with PDF Attachment             │
- │  - `RevocationLog.gs`: Status Ledger & Audit Log Recorder                         │
+ │  - `CertGenerator.gs`: Unique ID Gen, Batch Merkle Root Storage, Drive/Gmail      │
+ │  - `ApprovalWorkflow.gs`: Draft -> Pending -> Approved State Machine Guards       │
+ │  - `RevocationLog.gs`: State Guarded Status Ledger & Immutable Audit Trail        │
  └──────────────┬────────────────────────────────────────────────────────────────────┘
                 │
                 ▼
  ┌───────────────────────────────────────────────────────────────────────────────────┐
  │                    GOOGLE WORKSPACE IMMUTABLE DATA STORAGE                        │
  ├───────────────────────────────────────────────────────────────────────────────────┤
- │  - Google Sheets: Master Certificate Ledger, Student DB, Audit Logs               │
+ │  - Google Sheets: Master Certificate Ledger, Audit Trail, Revocation Logs         │
  │  - Google Drive: Encrypted PDF Vault (`/GGSIPU_Issued_Certificates/`)             │
  │  - Google Slides/Docs: Customizable Certificate Templates                         │
  └───────────────────────────────────────────────────────────────────────────────────┘
@@ -52,39 +52,40 @@ Every academic year, GGSIPU's Directorate of Students' Welfare and its various U
 
 ---
 
-## 🚀 Key Features
+## 🔒 Security & Architecture Enhancements (v2.0)
 
-1. **Lite Blockchain Hashing & Merkle Tree Validation**:
-   - Computes deterministic **SHA-256 cryptographic digests** using normalized student metadata (`Cert ID + Roll No + Student Name + Event + Salt`).
-   - Batches certificate hashes into **Merkle Trees** and stores the root hash in an immutable ledger sheet.
+1. **Role-Based Access & Token Authentication**:
+   - Administrative and mutation actions (`createCertificates`, `approveCertificate`, `revokeCertificate`, `getAll`, `getAuditLogs`) are protected by secure `ADMIN_API_KEY` token validation via Apps Script `PropertiesService`.
+   - Verification endpoints (`verifyId`, `verifyHash`) remain publicly accessible without login for friction-free student and employer verification.
 
-2. **Public QR Code & PDF Hash Verification Portal**:
-   - Built-in camera QR scanner (`Html5Qrcode`).
-   - Client-side WebCrypto SHA-256 calculation for uploaded PDF files to verify against the backend ledger.
+2. **Enforced State Machine Workflow (`Draft` ➔ `Pending` ➔ `Approved` ➔ `Revoked`)**:
+   - New batch certificates initialize to `Pending` status.
+   - Competent authority approval explicitly signs and transitions status to `Approved`.
+   - State-machine guards prevent invalid transitions (e.g., approving revoked certificates or duplicate revocations).
 
-3. **Bulk CSV Generation & Gmail Automated Dispatch**:
-   - Parses bulk student CSV files, generates unique Certificate IDs, and emails PDF certificates automatically via Gmail API.
+3. **Tamper-Evident SHA-256 & Merkle Tree Root Storage**:
+   - Deterministic SHA-256 hashes generated from canonical metadata.
+   - Batch Merkle Tree roots are calculated and atomically persisted into every certificate record in Google Sheets.
+   - Both ID and Hash verification recompute the cryptographic digest to detect manual tampering of sheet rows.
 
-4. **Approval Workflow & Digital Signatures**:
-   - Multi-tier lifecycle: `Draft` ➔ `Pending Approval` ➔ `Approved & Signed` ➔ `Issued` ➔ `Revoked`.
-   - HTML5 Canvas signature pad for Dean / Director / Convener sign-offs.
+4. **Stored XSS Sanitization**:
+   - Complete contextual HTML escaping (`escapeHtml`) on all user-submitted fields across the UI.
 
-5. **Revocation & Immutable Audit Trail**:
-   - Revocation workflow marks certificates as `REVOKED` in real time with mandatory reason logging.
-   - Comprehensive audit log tracking every user action.
+5. **Collision-Free Certificate IDs**:
+   - High-entropy timestamp + random hex identifiers with automatic deduplication checks against the master ledger.
 
 ---
 
 ## 📂 Repository Structure
 
 ```
-ggsipu-cert-system/
+ggsipu-certVault/
 ├── apps-script/                        # Production Google Apps Script Engine
-│   ├── Code.gs                         # Main REST API Web App router
+│   ├── Code.gs                         # REST API Web App router & Auth Controller
 │   ├── CryptoEngine.gs                 # SHA-256 & Merkle Tree calculation module
-│   ├── CertGenerator.gs                # PDF creation, Drive storage, Gmail dispatch
+│   ├── CertGenerator.gs                # Batch ID Gen, Merkle root persistence, Mail
 │   ├── ApprovalWorkflow.gs             # Workflow state machine & signature handler
-│   ├── RevocationLog.gs                # Revocation ledger & audit log recorder
+│   ├── RevocationLog.gs                # State-guarded revocation ledger & audit logs
 │   └── appsscript.json                 # Apps Script manifest file
 ├── frontend/                           # Single Page Web Application
 │   ├── index.html                      # Complete Web UI layout & sections
@@ -101,15 +102,16 @@ ggsipu-cert-system/
 
 ## 🛠️ How to Test & Run Locally
 
-1. Open [`/frontend/index.html`](file:///C:/Users/mitta/.gemini/antigravity/scratch/ggsipu-cert-system/frontend/index.html) directly in any web browser.
-2. The web application starts in **Local Demonstration Mode** pre-loaded with synthetic GGSIPU test data.
+1. Open [`/frontend/index.html`](file:///E:/certVault/ggsipu-certVault/frontend/index.html) directly in any modern web browser.
+2. The web application starts in **Local Demonstration Mode** with full state-machine simulation and client-side WebCrypto SHA-256 hashing.
 3. Test features:
    - **Dashboard**: Filter master ledger by school or status.
-   - **Public Verifier**: Test Certificate ID `GGSIPU-2026-DSW-1001` (Valid) or `GGSIPU-2026-DSW-1005` (Revoked).
-   - **Bulk Issuer**: Upload [`sample_students.csv`](file:///C:/Users/mitta/.gemini/antigravity/scratch/ggsipu-cert-system/sample_students.csv) or click "Download Sample CSV".
-   - **Approvals**: Draw signature on canvas and authorize pending batch.
-   - **Certificate Designer**: Live preview dynamic certificate canvas and export PNG.
-4. To connect to live Google Apps Script, follow [`docs/Deployment_Guide.md`](file:///C:/Users/mitta/.gemini/antigravity/scratch/ggsipu-cert-system/docs/Deployment_Guide.md) to paste your Web App API URL into `frontend/app.js`.
+   - **Public Verifier**: Test Certificate ID `GGSIPU-2026-DSW-1001` (Valid), `GGSIPU-2026-DSW-1003` (Pending), or `GGSIPU-2026-DSW-1005` (Revoked).
+   - **Bulk Issuer**: Upload [`sample_students.csv`](file:///E:/certVault/ggsipu-certVault/sample_students.csv) or paste CSV data &rarr; submit to Approval Queue as `Pending`.
+   - **Approvals**: Review pending certificates, draw signature on canvas, and authorize batch &rarr; transition to `Approved`.
+   - **Revocation**: Click Revoke on any approved certificate with a mandatory reason &rarr; transitions to `Revoked`.
+   - **Certificate Designer**: Live preview dynamic certificate canvas and export high-res PNG.
+4. To connect to live Google Apps Script, follow [`docs/Deployment_Guide.md`](file:///E:/certVault/ggsipu-certVault/docs/Deployment_Guide.md) and configure via the **API Config** modal in the top navbar.
 
 ---
 

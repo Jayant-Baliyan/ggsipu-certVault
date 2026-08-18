@@ -9,20 +9,21 @@ var CryptoEngine = {
    * Generates a deterministic SHA-256 cryptographic hash for a certificate record
    */
   generateCertificateHash: function(record) {
-    var certId = record.CertID || "";
-    var rollNo = record.RollNumber || record.RollNo || "";
-    var name = record.StudentName || record.Name || "";
-    var event = record.EventName || record.Event || "";
-    var date = record.IssueDate || "";
-    var salt = CONFIG.DEFAULT_SALT;
+    if (!record) return "";
+    var certId = String(record.CertID || "").trim();
+    var rollNo = String(record.RollNumber || record.RollNo || "").trim();
+    var name = String(record.StudentName || record.Name || "").trim().toUpperCase();
+    var event = String(record.EventName || record.Event || "").trim();
+    var date = String(record.IssueDate || "").trim();
+    var salt = (typeof CONFIG !== "undefined" && CONFIG.DEFAULT_SALT) ? CONFIG.DEFAULT_SALT : "GGSIPU_SALT_2026_DSW_SECURE_HASH";
 
-    // Standardized payload format for hash immutability
+    // Standardized canonical payload format for deterministic hash immutability
     var payload = [
       "CERT_ID:" + certId,
-      "ROLL_NO:" + String(rollNo).trim(),
-      "NAME:" + String(name).trim().toUpperCase(),
-      "EVENT:" + String(event).trim(),
-      "DATE:" + String(date).trim(),
+      "ROLL_NO:" + rollNo,
+      "NAME:" + name,
+      "EVENT:" + event,
+      "DATE:" + date,
       "SALT:" + salt
     ].join("|");
 
@@ -33,7 +34,8 @@ var CryptoEngine = {
    * Calculates SHA-256 Hash using Utilities.computeDigest in Apps Script
    */
   sha256Hex: function(inputStr) {
-    var rawDigest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, inputStr, Utilities.Charset.UTF_8);
+    if (!inputStr) return "";
+    var rawDigest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(inputStr), Utilities.Charset.UTF_8);
     var txt = "";
     for (var i = 0; i < rawDigest.length; i++) {
       var byteValue = rawDigest[i];
@@ -49,7 +51,7 @@ var CryptoEngine = {
    * Calculates Merkle Tree Root from an array of SHA-256 hashes
    */
   calculateMerkleRoot: function(hashes) {
-    if (!hashes || hashes.length === 0) return "";
+    if (!hashes || !Array.isArray(hashes) || hashes.length === 0) return "";
     if (hashes.length === 1) return hashes[0];
 
     var currentLayer = hashes.slice();
@@ -61,7 +63,7 @@ var CryptoEngine = {
           var combined = currentLayer[i] + currentLayer[i + 1];
           nextLayer.push(this.sha256Hex(combined));
         } else {
-          // If odd number, duplicate last hash
+          // If odd number of leaves, duplicate last hash
           var combinedOdd = currentLayer[i] + currentLayer[i];
           nextLayer.push(this.sha256Hex(combinedOdd));
         }

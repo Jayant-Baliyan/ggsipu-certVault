@@ -1,10 +1,16 @@
 /**
  * GGSIPU CertVault Application State & Logic Manager
  * Single Page Application (SPA) Controller with Web Crypto SHA-256 & Apps Script Sync
+ * 
+ * Version: 2.0.0
+ * Security Updates: Full Stored XSS Mitigation, State-Machine Guards, Collision-Free ID Generation,
+ * Standardized Canonical WebCrypto SHA-256 & Merkle Tree Root Calculation, API Key Authentication.
  */
 
-// Global Configuration & Deployment Endpoint
-let GAS_API_URL = ""; // Optional: Paste your Google Apps Script Web App Deployment URL here
+// Global Configuration & Deployment State
+let GAS_API_URL = localStorage.getItem("GGSIPU_GAS_API_URL") || "";
+let ADMIN_API_KEY = localStorage.getItem("GGSIPU_ADMIN_API_KEY") || "";
+const DEFAULT_SALT = "GGSIPU_SALT_2026_DSW_SECURE_HASH";
 
 // Initial Pre-populated Master Ledger State (Synthetic GGSIPU Test Dataset)
 let mockLedger = [
@@ -18,11 +24,11 @@ let mockLedger = [
     EventName: "Smart India Hackathon 2026 Internal Round",
     IssueDate: "2026-08-15",
     Status: "Approved",
-    SHA256Hash: "a3b9c7e812f694801b7a2d3e5f6a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a",
+    SHA256Hash: "6c2e35327ecad8b417ef2f205c0888dfae8e97a389fc781ea32a39281a8f94d0",
     MerkleRoot: "8f2d4e910a11b12c13d14e15f16a17b18c19d20e21f22a23b24c25d26e27f28a",
     DrivePdfUrl: "https://drive.google.com/file/d/mock_1001/view",
     QrVerificationUrl: "https://ggsipu.ac.in/verify?certId=GGSIPU-2026-DSW-1001",
-    ApprovedBy: "Prof. Dean Students' Welfare",
+    ApprovedBy: "Prof. Dean Students' Welfare (Dean DSW)",
     ApprovalDate: "2026-08-15"
   },
   {
@@ -35,11 +41,11 @@ let mockLedger = [
     EventName: "Annual Cybersecurity & Cryptography Workshop 2026",
     IssueDate: "2026-08-15",
     Status: "Approved",
-    SHA256Hash: "f1e2d3c4b5a698877665544332211000aabbccddeeff00112233445566778899",
+    SHA256Hash: "e5a7b1c3d9e0f2a4b6c8d0e1f3a5b7c9d1e3f5a7b9c1d3e5f7a9b1c3d5e7f9a1",
     MerkleRoot: "8f2d4e910a11b12c13d14e15f16a17b18c19d20e21f22a23b24c25d26e27f28a",
     DrivePdfUrl: "https://drive.google.com/file/d/mock_1002/view",
     QrVerificationUrl: "https://ggsipu.ac.in/verify?certId=GGSIPU-2026-DSW-1002",
-    ApprovedBy: "Prof. Dean Students' Welfare",
+    ApprovedBy: "Prof. Dean Students' Welfare (Dean DSW)",
     ApprovalDate: "2026-08-15"
   },
   {
@@ -56,7 +62,7 @@ let mockLedger = [
     MerkleRoot: "7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a234567890abcde",
     DrivePdfUrl: "https://drive.google.com/file/d/mock_1003/view",
     QrVerificationUrl: "https://ggsipu.ac.in/verify?certId=GGSIPU-2026-DSW-1003",
-    ApprovedBy: "Awaiting Dean Approval",
+    ApprovedBy: "",
     ApprovalDate: ""
   },
   {
@@ -73,7 +79,7 @@ let mockLedger = [
     MerkleRoot: "7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a234567890abcde",
     DrivePdfUrl: "https://drive.google.com/file/d/mock_1004/view",
     QrVerificationUrl: "https://ggsipu.ac.in/verify?certId=GGSIPU-2026-DSW-1004",
-    ApprovedBy: "Awaiting Convener Approval",
+    ApprovedBy: "",
     ApprovalDate: ""
   },
   {
@@ -90,24 +96,114 @@ let mockLedger = [
     MerkleRoot: "6b7c8d9e0f1a234567890abcdef1234567890abcdef1234567890abcdef1234",
     DrivePdfUrl: "https://drive.google.com/file/d/mock_1005/view",
     QrVerificationUrl: "https://ggsipu.ac.in/verify?certId=GGSIPU-2026-DSW-1005",
-    ApprovedBy: "Prof. Dean Students' Welfare",
+    ApprovedBy: "Prof. Dean Students' Welfare (Dean DSW)",
     ApprovalDate: "2026-08-10"
   }
 ];
 
 // Initial Audit Logs State
 let mockAuditLogs = [
-  { Timestamp: "2026-08-15 14:30:00", EventType: "BATCH_ISSUANCE", Details: "Issued 2 certificates for USICT Hackathon & Workshop. Merkle Root: 8f2d4e910a11...", PerformedBy: "dsw.admin@ggsipu.edu" },
-  { Timestamp: "2026-08-15 14:25:00", EventType: "APPROVAL", Details: "Approved certificate GGSIPU-2026-DSW-1001 for Aarav Sharma", PerformedBy: "Dean DSW" },
-  { Timestamp: "2026-08-12 11:15:00", EventType: "REVOCATION", Details: "Certificate GGSIPU-2026-DSW-1005 REVOKED. Reason: Duplicate registration entry", PerformedBy: "Dean DSW" }
+  { Timestamp: "2026-08-15 14:30:00", EventType: "BATCH_ISSUANCE", Details: "Created batch of 2 certificates with status Pending. Merkle Root: 8f2d4e910a11...", PerformedBy: "dsw.admin@ggsipu.edu" },
+  { Timestamp: "2026-08-15 14:25:00", EventType: "APPROVAL", Details: "Certificate GGSIPU-2026-DSW-1001 transitioned from [Pending] -> [Approved] by Prof. Dean Students' Welfare (Dean DSW)", PerformedBy: "Prof. Dean Students' Welfare" },
+  { Timestamp: "2026-08-12 11:15:00", EventType: "REVOCATION", Details: "Certificate GGSIPU-2026-DSW-1005 transitioned from [Approved] -> [Revoked]. Reason: Duplicate registration entry", PerformedBy: "Prof. Dean Students' Welfare" }
 ];
 
 let parsedCsvRecords = [];
 let html5QrCode = null;
 let currentRevocationCertId = "";
 
+/**
+ * Robust HTML Sanitizer to prevent Stored & Reflected XSS
+ */
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+/**
+ * Standard WebCrypto SHA-256 Hex Hash computation
+ */
+async function computeSha256(text) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  const hashBuffer = await window.crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Computes deterministic SHA-256 hash using the standardized canonical format
+ */
+async function computeCertificateRecordHash(record) {
+  const certId = String(record.CertID || "").trim();
+  const rollNo = String(record.RollNumber || record.RollNo || "").trim();
+  const name = String(record.StudentName || record.Name || "").trim().toUpperCase();
+  const event = String(record.EventName || record.Event || "").trim();
+  const date = String(record.IssueDate || "").trim();
+  const salt = DEFAULT_SALT;
+
+  const payload = [
+    `CERT_ID:${certId}`,
+    `ROLL_NO:${rollNo}`,
+    `NAME:${name}`,
+    `EVENT:${event}`,
+    `DATE:${date}`,
+    `SALT:${salt}`
+  ].join("|");
+
+  return await computeSha256(payload);
+}
+
+/**
+ * Computes Merkle Tree Root from an array of SHA-256 hashes matching Apps Script CryptoEngine
+ */
+async function computeMerkleRoot(hashes) {
+  if (!hashes || hashes.length === 0) return "";
+  if (hashes.length === 1) return hashes[0];
+
+  let currentLayer = hashes.slice();
+
+  while (currentLayer.length > 1) {
+    const nextLayer = [];
+    for (let i = 0; i < currentLayer.length; i += 2) {
+      if (i + 1 < currentLayer.length) {
+        const combined = currentLayer[i] + currentLayer[i + 1];
+        nextLayer.push(await computeSha256(combined));
+      } else {
+        // If odd number, duplicate last hash
+        const combinedOdd = currentLayer[i] + currentLayer[i];
+        nextLayer.push(await computeSha256(combinedOdd));
+      }
+    }
+    currentLayer = nextLayer;
+  }
+
+  return currentLayer[0];
+}
+
+/**
+ * High-Entropy Collision-Free Unique Certificate ID Generator
+ */
+function generateUniqueCertId(existingSet) {
+  const year = new Date().getFullYear();
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const timeChunk = Date.now().toString(36).toUpperCase().slice(-4);
+    const randChunk = Math.random().toString(16).substring(2, 6).toUpperCase();
+    const candidate = `GGSIPU-${year}-DSW-${timeChunk}${randChunk}`;
+    if (!existingSet || !existingSet.has(candidate.toUpperCase())) {
+      return candidate;
+    }
+  }
+  return `GGSIPU-${year}-DSW-${Date.now().toString(36).toUpperCase()}`;
+}
+
 // INITIALIZATION
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   feather.replace();
   setupNavigation();
   setupThemeToggle();
@@ -118,7 +214,14 @@ document.addEventListener("DOMContentLoaded", () => {
   setupSignaturePad();
   setupCertificateCanvas();
   setupRevocationModal();
-  
+  setupApiConfigModal();
+  updateConnectionStatusUI();
+
+  // Recompute initial hashes to ensure 100% cryptographic alignment
+  for (let c of mockLedger) {
+    c.SHA256Hash = await computeCertificateRecordHash(c);
+  }
+
   renderMasterLedger();
   renderMetrics();
   renderApprovalQueue();
@@ -134,6 +237,11 @@ function setupNavigation() {
       switchToTab(tabId);
     });
   });
+
+  const issueBtn = document.getElementById("dashboard-issue-btn");
+  if (issueBtn) {
+    issueBtn.addEventListener("click", () => switchToTab("issuer-tab"));
+  }
 }
 
 function switchToTab(tabId) {
@@ -180,14 +288,15 @@ function renderMetrics() {
 
 function renderMasterLedger() {
   const tbody = document.getElementById("ledger-table-body");
-  const searchQuery = document.getElementById("ledger-search-input").value.toLowerCase();
+  const searchQuery = (document.getElementById("ledger-search-input").value || "").toLowerCase().trim();
   const schoolFilter = document.getElementById("school-filter-select").value;
   const statusFilter = document.getElementById("status-filter-select").value;
 
   const filtered = mockLedger.filter(item => {
-    const matchesSearch = item.CertID.toLowerCase().includes(searchQuery) ||
-                          item.StudentName.toLowerCase().includes(searchQuery) ||
-                          item.RollNumber.toLowerCase().includes(searchQuery);
+    const matchesSearch = (item.CertID || "").toLowerCase().includes(searchQuery) ||
+                          (item.StudentName || "").toLowerCase().includes(searchQuery) ||
+                          (item.RollNumber || "").toLowerCase().includes(searchQuery) ||
+                          (item.EventName || "").toLowerCase().includes(searchQuery);
     const matchesSchool = (schoolFilter === "ALL") || (item.School === schoolFilter);
     const matchesStatus = (statusFilter === "ALL") || (item.Status === statusFilter);
     return matchesSearch && matchesSchool && matchesStatus;
@@ -196,7 +305,7 @@ function renderMasterLedger() {
   tbody.innerHTML = "";
 
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:var(--text-muted);">No matching certificate records found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:var(--text-muted);">No matching certificate records found in ledger.</td></tr>`;
     return;
   }
 
@@ -207,24 +316,35 @@ function renderMasterLedger() {
     if (rec.Status === "Pending") statusClass = "badge-pending";
     if (rec.Status === "Revoked") statusClass = "badge-revoked";
 
+    const safeCertId = escapeHtml(rec.CertID);
+    const safeStudentName = escapeHtml(rec.StudentName);
+    const safeRollNumber = escapeHtml(rec.RollNumber);
+    const safeSchool = escapeHtml(rec.School);
+    const safeCourse = escapeHtml(rec.Course);
+    const safeEventName = escapeHtml(rec.EventName);
+    const safeIssueDate = escapeHtml(rec.IssueDate);
+    const safeStatus = escapeHtml(rec.Status);
+    const safeHash = escapeHtml(rec.SHA256Hash || "");
+    const shortHash = safeHash.length > 16 ? safeHash.substring(0, 16) + "..." : safeHash;
+
     tr.innerHTML = `
-      <td><strong>${rec.CertID}</strong></td>
+      <td><strong>${safeCertId}</strong></td>
       <td>
-        <div style="font-weight:700;">${rec.StudentName}</div>
-        <div style="font-size:0.75rem; color:var(--text-muted);">Roll: ${rec.RollNumber}</div>
+        <div style="font-weight:700;">${safeStudentName}</div>
+        <div style="font-size:0.75rem; color:var(--text-muted);">Roll: ${safeRollNumber}</div>
       </td>
-      <td>${rec.School} <span style="font-size:0.75rem; color:var(--text-muted); display:block;">${rec.Course}</span></td>
-      <td>${rec.EventName}</td>
-      <td>${rec.IssueDate}</td>
-      <td><span class="badge ${statusClass}">${rec.Status}</span></td>
-      <td><code>${rec.SHA256Hash.substring(0, 16)}...</code></td>
+      <td>${safeSchool} <span style="font-size:0.75rem; color:var(--text-muted); display:block;">${safeCourse}</span></td>
+      <td>${safeEventName}</td>
+      <td>${safeIssueDate}</td>
+      <td><span class="badge ${statusClass}">${safeStatus}</span></td>
+      <td><code>${shortHash}</code></td>
       <td>
         <div style="display:flex; gap:6px;">
-          <button class="btn btn-secondary btn-sm" onclick="quickFillVerify('${rec.CertID}')" title="Verify in Public Portal">
+          <button class="btn btn-secondary btn-sm verify-row-btn" data-cert-id="${safeCertId}" title="Verify in Public Portal">
             <i data-feather="shield"></i> Verify
           </button>
           ${rec.Status !== 'Revoked' ? `
-            <button class="btn btn-danger btn-sm" onclick="openRevocationModal('${rec.CertID}')" title="Revoke Certificate">
+            <button class="btn btn-danger btn-sm revoke-row-btn" data-cert-id="${safeCertId}" title="Revoke Certificate">
               <i data-feather="slash"></i> Revoke
             </button>
           ` : ''}
@@ -234,6 +354,21 @@ function renderMasterLedger() {
     tbody.appendChild(tr);
   });
 
+  // Attach event handlers safely without raw string interpolation
+  tbody.querySelectorAll(".verify-row-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const certId = btn.getAttribute("data-cert-id");
+      quickFillVerify(certId);
+    });
+  });
+
+  tbody.querySelectorAll(".revoke-row-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const certId = btn.getAttribute("data-cert-id");
+      openRevocationModal(certId);
+    });
+  });
+
   feather.replace();
 }
 
@@ -241,7 +376,10 @@ function setupFilters() {
   document.getElementById("ledger-search-input").addEventListener("input", renderMasterLedger);
   document.getElementById("school-filter-select").addEventListener("change", renderMasterLedger);
   document.getElementById("status-filter-select").addEventListener("change", renderMasterLedger);
-  document.getElementById("refresh-data-btn").addEventListener("click", () => {
+  document.getElementById("refresh-data-btn").addEventListener("click", async () => {
+    if (GAS_API_URL) {
+      await fetchRemoteLedger();
+    }
     renderMasterLedger();
     renderMetrics();
     showToast("Master ledger refreshed");
@@ -250,7 +388,6 @@ function setupFilters() {
 
 // PUBLIC VERIFICATION PORTAL CONTROL
 function setupVerifier() {
-  // Verifier sub-tabs
   const vtabs = document.querySelectorAll(".vtab-btn");
   vtabs.forEach(btn => {
     btn.addEventListener("click", () => {
@@ -263,10 +400,26 @@ function setupVerifier() {
     });
   });
 
+  // Sample ID chips
+  document.querySelectorAll(".sample-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const sampleId = chip.getAttribute("data-sample-id");
+      quickFillVerify(sampleId);
+    });
+  });
+
   // Cert ID search button
   document.getElementById("verify-id-btn").addEventListener("click", () => {
     const certId = document.getElementById("cert-id-input").value.trim();
     executeVerificationById(certId);
+  });
+
+  // Enter key in input
+  document.getElementById("cert-id-input").addEventListener("keypress", (e) => {
+    if (e.key === "Enter") {
+      const certId = document.getElementById("cert-id-input").value.trim();
+      executeVerificationById(certId);
+    }
   });
 
   // QR Code Scanner setup
@@ -307,17 +460,41 @@ function quickFillVerify(certId) {
   executeVerificationById(certId);
 }
 
-function executeVerificationById(certId) {
+async function executeVerificationById(certId) {
   if (!certId) {
     showToast("Please enter a Certificate ID", "danger");
     return;
   }
 
-  const found = mockLedger.find(c => c.CertID.toLowerCase() === certId.toLowerCase());
-  renderVerificationResult(found, certId);
+  // If connected to remote Apps Script, verify against backend
+  if (GAS_API_URL) {
+    try {
+      const response = await fetch(`${GAS_API_URL}?action=verifyId&certId=${encodeURIComponent(certId)}`);
+      const data = await response.json();
+      if (data.status === "found") {
+        renderVerificationResult(data.certificate, certId, data.integrityCheck);
+        return;
+      } else {
+        renderVerificationResult(null, certId, "NOT_FOUND");
+        return;
+      }
+    } catch (err) {
+      console.warn("Backend verification error, checking local ledger:", err);
+    }
+  }
+
+  // Local ledger lookup with cryptographic integrity check
+  const found = mockLedger.find(c => (c.CertID || "").trim().toLowerCase() === certId.trim().toLowerCase());
+  if (found) {
+    const recomputedHash = await computeCertificateRecordHash(found);
+    const isUntampered = (recomputedHash.toLowerCase() === (found.SHA256Hash || "").toLowerCase());
+    renderVerificationResult(found, certId, isUntampered ? "PASSED" : "FAILED_TAMPERED");
+  } else {
+    renderVerificationResult(null, certId, "NOT_FOUND");
+  }
 }
 
-function renderVerificationResult(record, queryId) {
+function renderVerificationResult(record, queryId, integrityStatus = "PASSED") {
   const placeholder = document.getElementById("result-placeholder");
   const content = document.getElementById("result-content");
   const header = document.getElementById("result-badge-header");
@@ -332,7 +509,7 @@ function renderVerificationResult(record, queryId) {
     header.className = "verification-badge-header revoked";
     icon.setAttribute("data-feather", "alert-circle");
     title.textContent = "CERTIFICATE NOT FOUND / UNVERIFIED";
-    subtitle.textContent = `No record found in GGSIPU Ledger matching '${queryId}'`;
+    subtitle.textContent = `No record found in GGSIPU Ledger matching '${escapeHtml(queryId)}'`;
     
     document.getElementById("res-cert-id").textContent = queryId;
     document.getElementById("res-student-name").textContent = "N/A";
@@ -341,9 +518,27 @@ function renderVerificationResult(record, queryId) {
     document.getElementById("res-event").textContent = "N/A";
     document.getElementById("res-issue-date").textContent = "N/A";
     document.getElementById("res-approved-by").textContent = "N/A";
-    document.getElementById("res-integrity").textContent = "UNKNOWN";
+    document.getElementById("res-integrity").textContent = "NOT FOUND";
+    document.getElementById("res-integrity").className = "d-value text-danger";
     document.getElementById("res-sha256").textContent = "N/A";
     document.getElementById("res-merkle").textContent = "N/A";
+  } else if (integrityStatus === "FAILED_TAMPERED") {
+    header.className = "verification-badge-header revoked";
+    icon.setAttribute("data-feather", "alert-triangle");
+    title.textContent = "TAMPER ALERT: INTEGRITY CHECK FAILED";
+    subtitle.textContent = "Record metadata in ledger has been modified after hash generation!";
+
+    document.getElementById("res-cert-id").textContent = record.CertID;
+    document.getElementById("res-student-name").textContent = record.StudentName;
+    document.getElementById("res-roll-no").textContent = record.RollNumber;
+    document.getElementById("res-school").textContent = record.School;
+    document.getElementById("res-event").textContent = record.EventName;
+    document.getElementById("res-issue-date").textContent = record.IssueDate;
+    document.getElementById("res-approved-by").textContent = record.ApprovedBy || "N/A";
+    document.getElementById("res-integrity").textContent = "TAMPERED / MISMATCH";
+    document.getElementById("res-integrity").className = "d-value text-danger";
+    document.getElementById("res-sha256").textContent = record.SHA256Hash;
+    document.getElementById("res-merkle").textContent = record.MerkleRoot;
   } else if (record.Status === "Revoked") {
     header.className = "verification-badge-header revoked";
     icon.setAttribute("data-feather", "slash");
@@ -356,8 +551,26 @@ function renderVerificationResult(record, queryId) {
     document.getElementById("res-school").textContent = record.School;
     document.getElementById("res-event").textContent = record.EventName;
     document.getElementById("res-issue-date").textContent = record.IssueDate;
-    document.getElementById("res-approved-by").textContent = record.ApprovedBy;
+    document.getElementById("res-approved-by").textContent = record.ApprovedBy || "Competent Authority";
     document.getElementById("res-integrity").textContent = "INVALID (REVOKED)";
+    document.getElementById("res-integrity").className = "d-value text-danger";
+    document.getElementById("res-sha256").textContent = record.SHA256Hash;
+    document.getElementById("res-merkle").textContent = record.MerkleRoot;
+  } else if (record.Status === "Pending") {
+    header.className = "verification-badge-header revoked";
+    icon.setAttribute("data-feather", "clock");
+    title.textContent = "CERTIFICATE PENDING APPROVAL";
+    subtitle.textContent = "This certificate has been generated but is awaiting Competent Authority signature";
+
+    document.getElementById("res-cert-id").textContent = record.CertID;
+    document.getElementById("res-student-name").textContent = record.StudentName;
+    document.getElementById("res-roll-no").textContent = record.RollNumber;
+    document.getElementById("res-school").textContent = record.School;
+    document.getElementById("res-event").textContent = record.EventName;
+    document.getElementById("res-issue-date").textContent = record.IssueDate;
+    document.getElementById("res-approved-by").textContent = "Awaiting Approval";
+    document.getElementById("res-integrity").textContent = "PENDING SIGN-OFF";
+    document.getElementById("res-integrity").className = "d-value text-warning";
     document.getElementById("res-sha256").textContent = record.SHA256Hash;
     document.getElementById("res-merkle").textContent = record.MerkleRoot;
   } else {
@@ -372,11 +585,16 @@ function renderVerificationResult(record, queryId) {
     document.getElementById("res-school").textContent = record.School;
     document.getElementById("res-event").textContent = record.EventName;
     document.getElementById("res-issue-date").textContent = record.IssueDate;
-    document.getElementById("res-approved-by").textContent = record.ApprovedBy;
+    document.getElementById("res-approved-by").textContent = record.ApprovedBy || "Dean DSW";
     document.getElementById("res-integrity").textContent = "100% UNTAMPERED";
+    document.getElementById("res-integrity").className = "d-value text-success";
     document.getElementById("res-sha256").textContent = record.SHA256Hash;
     document.getElementById("res-merkle").textContent = record.MerkleRoot;
-    document.getElementById("res-drive-link").href = record.DrivePdfUrl;
+    
+    const driveLink = document.getElementById("res-drive-link");
+    if (driveLink) {
+      driveLink.href = record.DrivePdfUrl || "#";
+    }
   }
 
   feather.replace();
@@ -393,17 +611,21 @@ function startQrScanner() {
     { fps: 10, qrbox: { width: 250, height: 250 } },
     (decodedText) => {
       showToast(`QR Code Scanned: ${decodedText}`);
-      // Parse certId from scanned URL or text
       let certId = decodedText;
       if (decodedText.includes("certId=")) {
-        const urlParams = new URLSearchParams(decodedText.split("?")[1]);
-        certId = urlParams.get("certId") || decodedText;
+        try {
+          const urlObj = new URL(decodedText);
+          certId = urlObj.searchParams.get("certId") || decodedText;
+        } catch (e) {
+          const parts = decodedText.split("certId=");
+          if (parts[1]) certId = parts[1].split("&")[0];
+        }
       }
       stopQrScanner();
       executeVerificationById(certId);
     },
-    (errorMessage) => {
-      // Ignore scan errors while actively looking
+    () => {
+      // Ignore scan loop frames
     }
   ).catch(err => {
     showToast("Webcam access denied or unavailable", "danger");
@@ -417,7 +639,7 @@ function stopQrScanner() {
       html5QrCode = null;
       document.getElementById("start-qr-btn").style.display = "inline-flex";
       document.getElementById("stop-qr-btn").style.display = "none";
-    }).catch(err => {
+    }).catch(() => {
       document.getElementById("start-qr-btn").style.display = "inline-flex";
       document.getElementById("stop-qr-btn").style.display = "none";
     });
@@ -433,18 +655,35 @@ async function processPdfFile(file) {
 
   try {
     const arrayBuffer = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest("SHA-256", arrayBuffer);
+    const hashBuffer = await window.crypto.subtle.digest("SHA-256", arrayBuffer);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hexHash = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
 
     codeElem.textContent = hexHash;
-    showToast("PDF SHA-256 Hash computed successfully!");
+    showToast("Document SHA-256 Hash computed successfully!");
 
-    // Search matching hash in ledger
-    const found = mockLedger.find(c => c.SHA256Hash.toLowerCase() === hexHash.toLowerCase() || hexHash.includes("a3b9c7e8"));
-    renderVerificationResult(found || mockLedger[0], found ? found.CertID : "Uploaded Document");
+    // Search matching hash in ledger or backend
+    if (GAS_API_URL) {
+      try {
+        const response = await fetch(`${GAS_API_URL}?action=verifyHash&hash=${encodeURIComponent(hexHash)}`);
+        const data = await response.json();
+        if (data.status === "found") {
+          renderVerificationResult(data.certificate, data.certificate.CertID, data.integrityCheck);
+          return;
+        }
+      } catch (err) {
+        console.warn("Backend hash verification failed, falling back to local:", err);
+      }
+    }
+
+    const found = mockLedger.find(c => (c.SHA256Hash || "").toLowerCase() === hexHash.toLowerCase());
+    if (found) {
+      renderVerificationResult(found, found.CertID, "PASSED");
+    } else {
+      renderVerificationResult(null, "Uploaded File", "NOT_FOUND");
+    }
   } catch (err) {
-    codeElem.textContent = "Error computing hash: " + err.message;
+    codeElem.textContent = "Error computing hash: " + escapeHtml(err.message);
   }
 }
 
@@ -477,31 +716,37 @@ function readCsvFile(file) {
   reader.readAsText(file);
 }
 
-function parseCsvString(csvText) {
-  const lines = csvText.trim().split("\n");
+async function parseCsvString(csvText) {
+  const lines = (csvText || "").trim().split("\n");
   if (lines.length <= 1) {
     showToast("CSV file is empty or missing headers", "danger");
     return;
   }
 
-  const headers = lines[0].split(",").map(h => h.trim());
+  const headers = lines[0].split(",").map(h => h.trim().replace(/^["']|["']$/g, ""));
   parsedCsvRecords = [];
+
+  const existingIdsSet = new Set(mockLedger.map(c => (c.CertID || "").toUpperCase()));
 
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
-    const values = lines[i].split(",").map(v => v.trim());
+    const values = lines[i].split(",").map(v => v.trim().replace(/^["']|["']$/g, ""));
     const obj = {};
     headers.forEach((h, idx) => {
       obj[h] = values[idx] || "";
     });
 
-    if (!obj.CertID) {
-      obj.CertID = `GGSIPU-2026-DSW-${Math.floor(1006 + i)}`;
+    // Ensure high-entropy collision-free CertID
+    if (!obj.CertID || existingIdsSet.has(obj.CertID.toUpperCase())) {
+      obj.CertID = generateUniqueCertId(existingIdsSet);
     }
-    
-    // Compute preliminary SHA-256
-    const payload = `${obj.CertID}|${obj.RollNumber || ''}|${obj.StudentName || ''}|${obj.EventName || ''}`;
-    obj.SHA256Hash = simpleSha256(payload);
+    existingIdsSet.add(obj.CertID.toUpperCase());
+
+    obj.IssueDate = obj.IssueDate || new Date().toISOString().split("T")[0];
+    obj.Status = "Pending"; // Initial State Machine Rule
+
+    // Compute standardized WebCrypto SHA-256 hash
+    obj.SHA256Hash = await computeCertificateRecordHash(obj);
 
     parsedCsvRecords.push(obj);
   }
@@ -514,60 +759,89 @@ function parseCsvString(csvText) {
 
   parsedCsvRecords.forEach((rec, idx) => {
     const tr = document.createElement("tr");
+    const safeCertId = escapeHtml(rec.CertID);
+    const safeRoll = escapeHtml(rec.RollNumber || rec.RollNo || "N/A");
+    const safeName = escapeHtml(rec.StudentName || rec.Name || "N/A");
+    const safeEmail = escapeHtml(rec.Email || "N/A");
+    const safeSchool = escapeHtml(rec.School || rec.Department || "USICT");
+    const safeEvent = escapeHtml(rec.EventName || rec.Event || "Workshop");
+    const safeHash = escapeHtml(rec.SHA256Hash || "");
+    const shortHash = safeHash.length > 16 ? safeHash.substring(0, 16) + "..." : safeHash;
+
     tr.innerHTML = `
       <td>${idx + 1}</td>
-      <td><strong>${rec.CertID}</strong></td>
-      <td>${rec.RollNumber || 'N/A'}</td>
-      <td>${rec.StudentName || 'N/A'}</td>
-      <td>${rec.Email || 'N/A'}</td>
-      <td>${rec.School || 'USICT'}</td>
-      <td>${rec.EventName || 'Hackathon'}</td>
-      <td><code>${rec.SHA256Hash.substring(0, 16)}...</code></td>
+      <td><strong>${safeCertId}</strong></td>
+      <td>${safeRoll}</td>
+      <td>${safeName}</td>
+      <td>${safeEmail}</td>
+      <td>${safeSchool}</td>
+      <td>${safeEvent}</td>
+      <td><span class="badge badge-pending">Pending</span></td>
+      <td><code>${shortHash}</code></td>
     `;
     tbody.appendChild(tr);
   });
 
-  showToast(`Parsed ${parsedCsvRecords.length} records from CSV`);
+  showToast(`Parsed ${parsedCsvRecords.length} records from CSV with unique IDs and hashes`);
 }
 
-function simpleSha256(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash << 5) - hash + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(16).padStart(64, 'a');
-}
-
-function processCsvBatchIssuance() {
+async function processCsvBatchIssuance() {
   if (parsedCsvRecords.length === 0) return;
 
-  parsedCsvRecords.forEach(rec => {
+  const hashesList = parsedCsvRecords.map(r => r.SHA256Hash);
+  const batchMerkleRoot = await computeMerkleRoot(hashesList);
+
+  const newRecords = [];
+
+  for (let rec of parsedCsvRecords) {
     const newRecord = {
       CertID: rec.CertID,
-      RollNumber: rec.RollNumber || "00000000000",
-      StudentName: rec.StudentName || "Student Recipient",
+      RollNumber: rec.RollNumber || rec.RollNo || "00000000000",
+      StudentName: rec.StudentName || rec.Name || "Student Recipient",
       Email: rec.Email || "",
-      School: rec.School || "USICT",
+      School: rec.School || rec.Department || "USICT",
       Course: rec.Course || "B.Tech",
-      EventName: rec.EventName || "University Event",
-      IssueDate: new Date().toISOString().split("T")[0],
-      Status: "Pending",
+      EventName: rec.EventName || rec.Event || "University Event",
+      IssueDate: rec.IssueDate || new Date().toISOString().split("T")[0],
+      Status: "Pending", // State Machine: Enforce Pending status upon creation
       SHA256Hash: rec.SHA256Hash,
-      MerkleRoot: "8f2d4e910a11b12c13d14e15f16a17b18c19d20e21f22a23b24c25d26e27f28a",
+      MerkleRoot: batchMerkleRoot,
       DrivePdfUrl: `https://drive.google.com/file/d/mock_${rec.CertID}/view`,
-      QrVerificationUrl: `https://ggsipu.ac.in/verify?certId=${rec.CertID}`,
-      ApprovedBy: "Pending Approval",
+      QrVerificationUrl: `https://ggsipu.ac.in/verify?certId=${encodeURIComponent(rec.CertID)}&hash=${encodeURIComponent(rec.SHA256Hash)}`,
+      ApprovedBy: "",
       ApprovalDate: ""
     };
+    newRecords.push(newRecord);
     mockLedger.unshift(newRecord);
-  });
+  }
+
+  // If connected to remote Apps Script, push batch with API Key
+  if (GAS_API_URL) {
+    try {
+      const res = await fetch(GAS_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "createCertificates",
+          apiKey: ADMIN_API_KEY,
+          records: newRecords,
+          issuerEmail: "dsw.issuer@ggsipu.edu"
+        })
+      });
+      const remoteData = await res.json();
+      if (remoteData.status === "unauthorized") {
+        showToast("Apps Script Authentication failed: Invalid Admin API Key", "danger");
+      }
+    } catch (err) {
+      console.warn("Failed to sync batch to remote GAS:", err);
+    }
+  }
 
   // Log audit
   mockAuditLogs.unshift({
     Timestamp: new Date().toLocaleString(),
     EventType: "BATCH_ISSUANCE",
-    Details: `Submitted batch of ${parsedCsvRecords.length} certificates for approval.`,
+    Details: `Created batch of ${parsedCsvRecords.length} certificates with status Pending. Merkle Root: ${batchMerkleRoot}`,
     PerformedBy: "dsw.issuer@ggsipu.edu"
   });
 
@@ -576,15 +850,25 @@ function processCsvBatchIssuance() {
   renderApprovalQueue();
   renderAuditLogs();
 
-  showToast(`Submitted ${parsedCsvRecords.length} certificates to Approval Queue!`, "success");
+  showToast(`Submitted ${parsedCsvRecords.length} certificates to Approval Queue! (Status: Pending)`, "success");
   parsedCsvRecords = [];
   document.getElementById("csv-preview-card").style.display = "none";
+  document.getElementById("csv-paste-textarea").value = "";
   switchToTab("approval-tab");
 }
 
 // APPROVAL QUEUE
 function setupApprovalQueue() {
   document.getElementById("approve-all-selected-btn").addEventListener("click", approveSelectedBatch);
+  
+  const selectAllChk = document.getElementById("select-all-pending");
+  if (selectAllChk) {
+    selectAllChk.addEventListener("change", (e) => {
+      document.querySelectorAll(".pending-chk").forEach(chk => {
+        chk.checked = e.target.checked;
+      });
+    });
+  }
 }
 
 function renderApprovalQueue() {
@@ -594,22 +878,31 @@ function renderApprovalQueue() {
   tbody.innerHTML = "";
 
   if (pending.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:var(--text-muted);">No pending certificate requests in queue.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:var(--text-muted);">No pending certificate requests in queue. All certificates are processed.</td></tr>`;
     return;
   }
 
   pending.forEach(rec => {
     const tr = document.createElement("tr");
+    const safeCertId = escapeHtml(rec.CertID);
+    const safeName = escapeHtml(rec.StudentName);
+    const safeRoll = escapeHtml(rec.RollNumber);
+    const safeSchool = escapeHtml(rec.School);
+    const safeCourse = escapeHtml(rec.Course);
+    const safeEvent = escapeHtml(rec.EventName);
+    const safeHash = escapeHtml(rec.SHA256Hash || "");
+    const shortHash = safeHash.length > 16 ? safeHash.substring(0, 16) + "..." : safeHash;
+
     tr.innerHTML = `
-      <td><input type="checkbox" class="pending-chk" value="${rec.CertID}" checked></td>
-      <td><strong>${rec.CertID}</strong></td>
-      <td>${rec.StudentName}</td>
-      <td>${rec.RollNumber}</td>
-      <td>${rec.School} (${rec.Course})</td>
-      <td>${rec.EventName}</td>
-      <td><code>${rec.SHA256Hash.substring(0, 16)}...</code></td>
+      <td><input type="checkbox" class="pending-chk" value="${safeCertId}" checked></td>
+      <td><strong>${safeCertId}</strong></td>
+      <td>${safeName}</td>
+      <td>${safeRoll}</td>
+      <td>${safeSchool} (${safeCourse})</td>
+      <td>${safeEvent}</td>
+      <td><code>${shortHash}</code></td>
       <td>
-        <button class="btn btn-success btn-sm" onclick="approveSingleCert('${rec.CertID}')">
+        <button class="btn btn-success btn-sm approve-single-btn" data-cert-id="${safeCertId}">
           <i data-feather="check"></i> Sign & Approve
         </button>
       </td>
@@ -617,53 +910,120 @@ function renderApprovalQueue() {
     tbody.appendChild(tr);
   });
 
+  tbody.querySelectorAll(".approve-single-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const certId = btn.getAttribute("data-cert-id");
+      approveSingleCert(certId);
+    });
+  });
+
   feather.replace();
 }
 
-function approveSingleCert(certId) {
+async function approveSingleCert(certId) {
   const target = mockLedger.find(c => c.CertID === certId);
-  if (target) {
-    target.Status = "Approved";
-    target.ApprovedBy = "Prof. Dean Students' Welfare";
-    target.ApprovalDate = new Date().toISOString().split("T")[0];
-
-    mockAuditLogs.unshift({
-      Timestamp: new Date().toLocaleString(),
-      EventType: "APPROVAL",
-      Details: `Approved certificate ${certId} for ${target.StudentName}`,
-      PerformedBy: "Dean DSW"
-    });
-
-    renderMasterLedger();
-    renderMetrics();
-    renderApprovalQueue();
-    renderAuditLogs();
-    showToast(`Certificate ${certId} signed & approved!`, "success");
-  }
-}
-
-function approveSelectedBatch() {
-  const checkboxes = document.querySelectorAll(".pending-chk:checked");
-  if (checkboxes.length === 0) {
-    showToast("No certificates selected for approval", "danger");
+  if (!target) {
+    showToast(`Certificate ${certId} not found`, "danger");
     return;
   }
 
-  checkboxes.forEach(chk => {
-    const certId = chk.value;
-    const target = mockLedger.find(c => c.CertID === certId);
-    if (target) {
-      target.Status = "Approved";
-      target.ApprovedBy = "Prof. Dean Students' Welfare";
-      target.ApprovalDate = new Date().toISOString().split("T")[0];
+  // State Machine Guard: Cannot approve revoked cert
+  if (target.Status === "Revoked") {
+    showToast(`State Violation: Cannot approve certificate ${certId} because it is REVOKED.`, "danger");
+    return;
+  }
+
+  if (target.Status === "Approved") {
+    showToast(`Certificate ${certId} is already approved.`, "info");
+    return;
+  }
+
+  target.Status = "Approved";
+  target.ApprovedBy = "Prof. Dean Students' Welfare (Dean DSW)";
+  target.ApprovalDate = new Date().toISOString().split("T")[0];
+
+  // Remote Apps Script Sync if configured
+  if (GAS_API_URL) {
+    try {
+      await fetch(GAS_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "approveCertificate",
+          apiKey: ADMIN_API_KEY,
+          certId: certId,
+          approverName: "Prof. Dean Students' Welfare",
+          approverRole: "Dean DSW"
+        })
+      });
+    } catch (err) {
+      console.warn("Remote approval sync failed:", err);
     }
+  }
+
+  mockAuditLogs.unshift({
+    Timestamp: new Date().toLocaleString(),
+    EventType: "APPROVAL",
+    Details: `Certificate ${certId} transitioned from [Pending] -> [Approved] by Prof. Dean Students' Welfare`,
+    PerformedBy: "Prof. Dean Students' Welfare"
   });
 
   renderMasterLedger();
   renderMetrics();
   renderApprovalQueue();
   renderAuditLogs();
-  showToast(`Approved ${checkboxes.length} certificates successfully!`, "success");
+  showToast(`Certificate ${certId} signed & approved!`, "success");
+}
+
+async function approveSelectedBatch() {
+  const checkboxes = document.querySelectorAll(".pending-chk:checked");
+  if (checkboxes.length === 0) {
+    showToast("No certificates selected for approval", "danger");
+    return;
+  }
+
+  let approvedCount = 0;
+  const today = new Date().toISOString().split("T")[0];
+
+  for (let chk of checkboxes) {
+    const certId = chk.value;
+    const target = mockLedger.find(c => c.CertID === certId);
+    if (target && target.Status === "Pending") {
+      target.Status = "Approved";
+      target.ApprovedBy = "Prof. Dean Students' Welfare (Dean DSW)";
+      target.ApprovalDate = today;
+      approvedCount++;
+
+      if (GAS_API_URL) {
+        try {
+          fetch(GAS_API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain" },
+            body: JSON.stringify({
+              action: "approveCertificate",
+              apiKey: ADMIN_API_KEY,
+              certId: certId,
+              approverName: "Prof. Dean Students' Welfare",
+              approverRole: "Dean DSW"
+            })
+          });
+        } catch (e) {}
+      }
+    }
+  }
+
+  mockAuditLogs.unshift({
+    Timestamp: new Date().toLocaleString(),
+    EventType: "APPROVAL",
+    Details: `Batch approved ${approvedCount} certificates by Prof. Dean Students' Welfare`,
+    PerformedBy: "Prof. Dean Students' Welfare"
+  });
+
+  renderMasterLedger();
+  renderMetrics();
+  renderApprovalQueue();
+  renderAuditLogs();
+  showToast(`Approved ${approvedCount} certificates successfully!`, "success");
 }
 
 // DIGITAL SIGNATURE PAD
@@ -701,7 +1061,8 @@ function setupSignaturePad() {
 function setupCertificateCanvas() {
   const inputs = ["cert-tpl-name", "cert-tpl-roll", "cert-tpl-event", "cert-tpl-school", "cert-tpl-signatory"];
   inputs.forEach(id => {
-    document.getElementById(id).addEventListener("input", renderCertificateCanvas);
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("input", renderCertificateCanvas);
   });
 
   document.getElementById("download-canvas-cert-btn").addEventListener("click", () => {
@@ -715,6 +1076,7 @@ function setupCertificateCanvas() {
 
 function renderCertificateCanvas() {
   const canvas = document.getElementById("cert-canvas");
+  if (!canvas) return;
   const ctx = canvas.getContext("2d");
 
   const name = document.getElementById("cert-tpl-name").value || "Student Name";
@@ -781,7 +1143,7 @@ function renderCertificateCanvas() {
   ctx.fillStyle = "#64748b";
   ctx.font = "12px 'Space Grotesk', sans-serif";
   ctx.fillText("Cert ID: GGSIPU-2026-DSW-1001", 60, 520);
-  ctx.fillText("SHA-256 Hash: a3b9c7e812f694801b7a2d3e5f6a8b9c...", 60, 540);
+  ctx.fillText("SHA-256 Hash: 6c2e35327ecad8b417ef2f205c0888df...", 60, 540);
 
   // Signatory Line
   ctx.textAlign = "right";
@@ -792,7 +1154,7 @@ function renderCertificateCanvas() {
   ctx.fillStyle = "#64748b";
   ctx.fillText("Competent Authority Sign-off", canvas.width - 60, 540);
 
-  // Draw Simulated QR Code Box
+  // Draw QR Placeholder
   ctx.fillStyle = "#f1f5f9";
   ctx.fillRect(canvas.width / 2 - 35, 470, 70, 70);
   ctx.strokeStyle = "#94a3b8";
@@ -807,15 +1169,33 @@ function renderCertificateCanvas() {
 // AUDIT LOG RENDER
 function renderAuditLogs() {
   const tbody = document.getElementById("audit-log-tbody");
+  const searchQuery = (document.getElementById("audit-search-input").value || "").toLowerCase().trim();
+
   tbody.innerHTML = "";
 
-  mockAuditLogs.forEach(log => {
+  const filteredLogs = mockAuditLogs.filter(l => {
+    return (l.EventType || "").toLowerCase().includes(searchQuery) ||
+           (l.Details || "").toLowerCase().includes(searchQuery) ||
+           (l.PerformedBy || "").toLowerCase().includes(searchQuery);
+  });
+
+  if (filteredLogs.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:24px; color:var(--text-muted);">No audit log records found.</td></tr>`;
+    return;
+  }
+
+  filteredLogs.forEach(log => {
     const tr = document.createElement("tr");
+    const safeTime = escapeHtml(log.Timestamp);
+    const safeType = escapeHtml(log.EventType);
+    const safeDetails = escapeHtml(log.Details);
+    const safeUser = escapeHtml(log.PerformedBy);
+
     tr.innerHTML = `
-      <td>${log.Timestamp}</td>
-      <td><span class="badge badge-valid">${log.EventType}</span></td>
-      <td>${log.Details}</td>
-      <td>${log.PerformedBy}</td>
+      <td>${safeTime}</td>
+      <td><span class="badge badge-valid">${safeType}</span></td>
+      <td>${safeDetails}</td>
+      <td>${safeUser}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -824,9 +1204,22 @@ function renderAuditLogs() {
 // REVOCATION MODAL
 function setupRevocationModal() {
   document.getElementById("confirm-revoke-btn").addEventListener("click", executeRevocation);
+  document.getElementById("close-revocation-modal-btn").addEventListener("click", closeRevocationModal);
+  document.getElementById("cancel-revoke-btn").addEventListener("click", closeRevocationModal);
+  
+  const searchInput = document.getElementById("audit-search-input");
+  if (searchInput) {
+    searchInput.addEventListener("input", renderAuditLogs);
+  }
 }
 
 function openRevocationModal(certId) {
+  const target = mockLedger.find(c => c.CertID === certId);
+  if (target && target.Status === "Revoked") {
+    showToast(`Certificate ${certId} is already REVOKED.`, "danger");
+    return;
+  }
+
   currentRevocationCertId = certId;
   document.getElementById("modal-target-cert-id").textContent = certId;
   document.getElementById("revocation-reason-input").value = "";
@@ -837,29 +1230,128 @@ function closeRevocationModal() {
   document.getElementById("revocation-modal").style.display = "none";
 }
 
-function executeRevocation() {
+async function executeRevocation() {
   const reason = document.getElementById("revocation-reason-input").value.trim();
   if (!reason) {
-    showToast("Please enter a revocation reason", "danger");
+    showToast("Please enter a mandatory revocation reason", "danger");
     return;
   }
 
   const target = mockLedger.find(c => c.CertID === currentRevocationCertId);
-  if (target) {
-    target.Status = "Revoked";
+  if (!target) {
+    showToast(`Certificate ${currentRevocationCertId} not found`, "danger");
+    return;
+  }
 
-    mockAuditLogs.unshift({
-      Timestamp: new Date().toLocaleString(),
-      EventType: "REVOCATION",
-      Details: `Certificate ${currentRevocationCertId} REVOKED. Reason: ${reason}`,
-      PerformedBy: "Dean DSW"
-    });
-
-    renderMasterLedger();
-    renderMetrics();
-    renderAuditLogs();
+  // State Machine Guard: Cannot revoke already revoked cert
+  if (target.Status === "Revoked") {
+    showToast(`Certificate ${currentRevocationCertId} is already REVOKED.`, "danger");
     closeRevocationModal();
-    showToast(`Certificate ${currentRevocationCertId} has been REVOKED.`, "danger");
+    return;
+  }
+
+  const prevStatus = target.Status;
+  target.Status = "Revoked";
+
+  if (GAS_API_URL) {
+    try {
+      await fetch(GAS_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "revokeCertificate",
+          apiKey: ADMIN_API_KEY,
+          certId: currentRevocationCertId,
+          reason: reason,
+          revokedBy: "Prof. Dean Students' Welfare (Dean DSW)"
+        })
+      });
+    } catch (err) {
+      console.warn("Remote revocation sync failed:", err);
+    }
+  }
+
+  mockAuditLogs.unshift({
+    Timestamp: new Date().toLocaleString(),
+    EventType: "REVOCATION",
+    Details: `Certificate ${currentRevocationCertId} transitioned from [${prevStatus}] -> [Revoked]. Reason: ${reason}`,
+    PerformedBy: "Prof. Dean Students' Welfare"
+  });
+
+  renderMasterLedger();
+  renderMetrics();
+  renderApprovalQueue();
+  renderAuditLogs();
+  closeRevocationModal();
+  showToast(`Certificate ${currentRevocationCertId} has been REVOKED.`, "danger");
+}
+
+// API CONFIGURATION MODAL
+function setupApiConfigModal() {
+  const modal = document.getElementById("api-config-modal");
+  const openBtn = document.getElementById("api-config-btn");
+  const closeBtn = document.getElementById("close-api-config-modal-btn");
+  const cancelBtn = document.getElementById("cancel-api-config-btn");
+  const saveBtn = document.getElementById("save-api-config-btn");
+
+  openBtn.addEventListener("click", () => {
+    document.getElementById("gas-url-input").value = GAS_API_URL;
+    document.getElementById("api-key-input").value = ADMIN_API_KEY;
+    modal.style.display = "flex";
+  });
+
+  const closeModal = () => { modal.style.display = "none"; };
+  closeBtn.addEventListener("click", closeModal);
+  cancelBtn.addEventListener("click", closeModal);
+
+  saveBtn.addEventListener("click", async () => {
+    GAS_API_URL = document.getElementById("gas-url-input").value.trim();
+    ADMIN_API_KEY = document.getElementById("api-key-input").value.trim();
+
+    localStorage.setItem("GGSIPU_GAS_API_URL", GAS_API_URL);
+    localStorage.setItem("GGSIPU_ADMIN_API_KEY", ADMIN_API_KEY);
+
+    updateConnectionStatusUI();
+    closeModal();
+
+    if (GAS_API_URL) {
+      showToast("Attempting connection to Google Apps Script Web App...");
+      await fetchRemoteLedger();
+    } else {
+      showToast("Running in Local Simulation Mode", "info");
+    }
+  });
+}
+
+function updateConnectionStatusUI() {
+  const statusText = document.getElementById("status-mode-text");
+  const statusDot = document.getElementById("status-dot");
+
+  if (GAS_API_URL) {
+    statusText.textContent = "Google Cloud Active";
+    statusDot.className = "status-dot online";
+  } else {
+    statusText.textContent = "Local Engine Active";
+    statusDot.className = "status-dot online";
+  }
+}
+
+async function fetchRemoteLedger() {
+  if (!GAS_API_URL) return;
+  try {
+    const res = await fetch(`${GAS_API_URL}?action=getAll&apiKey=${encodeURIComponent(ADMIN_API_KEY)}`);
+    const data = await res.json();
+    if (data.status === "success" && Array.isArray(data.certificates)) {
+      mockLedger = data.certificates;
+      renderMasterLedger();
+      renderMetrics();
+      renderApprovalQueue();
+      showToast(`Loaded ${data.certificates.length} certificates from Google Sheets!`, "success");
+    } else if (data.status === "unauthorized") {
+      showToast("Access Denied: Please configure valid Admin API Key in API Config", "danger");
+    }
+  } catch (err) {
+    showToast("Failed to fetch remote ledger from Google Apps Script", "danger");
   }
 }
 
@@ -868,9 +1360,13 @@ function showToast(message, type = "info") {
   const container = document.getElementById("toast-container");
   const toast = document.createElement("div");
   toast.className = `toast ${type}`;
+
+  const iconName = type === 'success' ? 'check-circle' : type === 'danger' ? 'alert-circle' : 'info';
+  const safeMsg = escapeHtml(message);
+
   toast.innerHTML = `
-    <i data-feather="${type === 'success' ? 'check-circle' : type === 'danger' ? 'alert-circle' : 'info'}"></i>
-    <span>${message}</span>
+    <i data-feather="${iconName}"></i>
+    <span>${safeMsg}</span>
   `;
   container.appendChild(toast);
   feather.replace();

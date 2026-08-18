@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GGSIPU CertVault - Blockchain Certificate Lifecycle & Verification Platform</title>
+  <meta name="description" content="GGSIPU Directorate of Students' Welfare Lite Blockchain-Based Certificate Generation, Verification and Management Platform.">
   <!-- Google Fonts: Plus Jakarta Sans & Space Grotesk -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -34,30 +35,33 @@
         </div>
       </div>
 
-      <nav class="nav-links">
-        <button class="nav-btn active" data-tab="dashboard-tab">
+      <nav class="nav-links" aria-label="Main Navigation">
+        <button class="nav-btn active" data-tab="dashboard-tab" id="nav-btn-dashboard">
           <i data-feather="grid"></i> Dashboard
         </button>
-        <button class="nav-btn" data-tab="verifier-tab">
+        <button class="nav-btn" data-tab="verifier-tab" id="nav-btn-verifier">
           <i data-feather="shield-check"></i> Public Verifier
         </button>
-        <button class="nav-btn" data-tab="issuer-tab">
+        <button class="nav-btn" data-tab="issuer-tab" id="nav-btn-issuer">
           <i data-feather="upload-cloud"></i> Bulk Issuer
         </button>
-        <button class="nav-btn" data-tab="approval-tab">
-          <i data-feather="check-square"></i> Approvals <span class="badge-pill" id="pending-count-badge">2</span>
+        <button class="nav-btn" data-tab="approval-tab" id="nav-btn-approval">
+          <i data-feather="check-square"></i> Approvals <span class="badge-pill" id="pending-count-badge">0</span>
         </button>
-        <button class="nav-btn" data-tab="template-tab">
+        <button class="nav-btn" data-tab="template-tab" id="nav-btn-template">
           <i data-feather="file-text"></i> Certificate Designer
         </button>
-        <button class="nav-btn" data-tab="audit-tab">
-          <i data-feather="file-text"></i> Audit Logs
+        <button class="nav-btn" data-tab="audit-tab" id="nav-btn-audit">
+          <i data-feather="shield"></i> Audit Logs
         </button>
       </nav>
 
       <div class="header-actions">
-        <div class="connection-status" id="connection-status-pill" title="Click to toggle standalone/GAS API mode">
-          <span class="status-dot online"></span>
+        <button class="btn btn-secondary btn-sm" id="api-config-btn" title="Configure Apps Script Web App & Admin API Key">
+          <i data-feather="key"></i> API Config
+        </button>
+        <div class="connection-status" id="connection-status-pill" title="Click to view connection info">
+          <span class="status-dot online" id="status-dot"></span>
           <span class="status-text" id="status-mode-text">Local Engine Active</span>
         </div>
         <button class="theme-toggle-btn" id="theme-toggle" title="Toggle Light/Dark Theme">
@@ -81,7 +85,7 @@
           <button class="btn btn-secondary" id="refresh-data-btn">
             <i data-feather="refresh-cw"></i> Refresh Ledger
           </button>
-          <button class="btn btn-primary" onclick="switchToTab('issuer-tab')">
+          <button class="btn btn-primary" id="dashboard-issue-btn">
             <i data-feather="plus"></i> Issue New Certificates
           </button>
         </div>
@@ -94,9 +98,9 @@
             <i data-feather="award"></i>
           </div>
           <div class="metric-info">
-            <span class="metric-label">Total Certificates Issued</span>
-            <h3 class="metric-value" id="metric-total-certs">1,248</h3>
-            <span class="metric-sub text-success">100% Google Drive Secured</span>
+            <span class="metric-label">Total Certificates</span>
+            <h3 class="metric-value" id="metric-total-certs">0</h3>
+            <span class="metric-sub text-success">Google Workspace Ledger</span>
           </div>
         </div>
 
@@ -105,9 +109,9 @@
             <i data-feather="shield"></i>
           </div>
           <div class="metric-info">
-            <span class="metric-label">Verified Authentic</span>
-            <h3 class="metric-value" id="metric-verified-count">1,243</h3>
-            <span class="metric-sub">SHA-256 Hash Matched</span>
+            <span class="metric-label">Approved / Verified</span>
+            <h3 class="metric-value" id="metric-verified-count">0</h3>
+            <span class="metric-sub">SHA-256 Digest Matched</span>
           </div>
         </div>
 
@@ -117,8 +121,8 @@
           </div>
           <div class="metric-info">
             <span class="metric-label">Pending Approval</span>
-            <h3 class="metric-value" id="metric-pending-count">2</h3>
-            <span class="metric-sub text-warning">Awaiting Competent Authority</span>
+            <h3 class="metric-value" id="metric-pending-count">0</h3>
+            <span class="metric-sub text-warning">Awaiting Authority Sign-off</span>
           </div>
         </div>
 
@@ -128,7 +132,7 @@
           </div>
           <div class="metric-info">
             <span class="metric-label">Revoked Certificates</span>
-            <h3 class="metric-value" id="metric-revoked-count">1</h3>
+            <h3 class="metric-value" id="metric-revoked-count">0</h3>
             <span class="metric-sub text-danger">Blacklisted in Ledger</span>
           </div>
         </div>
@@ -139,7 +143,7 @@
         <div class="card-header">
           <div class="card-title-group">
             <h3>Master Certificate Ledger</h3>
-            <span class="badge" id="ledger-total-badge">5 Certificates</span>
+            <span class="badge" id="ledger-total-badge">0 Certificates</span>
           </div>
           <div class="table-filters">
             <div class="search-box">
@@ -189,7 +193,7 @@
       <div class="pane-header">
         <div>
           <h2>Public Certificate Verification & QR Inspector</h2>
-          <p class="section-desc">Instantly verify certificate authenticity using QR Code scanner, Certificate ID, or client-side PDF SHA-256 hash comparison.</p>
+          <p class="section-desc">Instantly verify certificate authenticity using QR Code scanner, Certificate ID, or client-side PDF SHA-256 hash comparison. <em>(Public Open Access)</em></p>
         </div>
       </div>
 
@@ -221,9 +225,10 @@
               </div>
               <div class="quick-samples">
                 <span class="sample-label">Try sample IDs:</span>
-                <button class="sample-chip" onclick="quickFillVerify('GGSIPU-2026-DSW-1001')">GGSIPU-2026-DSW-1001 (Valid)</button>
-                <button class="sample-chip" onclick="quickFillVerify('GGSIPU-2026-DSW-1005')">GGSIPU-2026-DSW-1005 (Revoked)</button>
-                <button class="sample-chip" onclick="quickFillVerify('GGSIPU-INVALID-9999')">GGSIPU-INVALID-9999</button>
+                <button class="sample-chip" data-sample-id="GGSIPU-2026-DSW-1001">GGSIPU-2026-DSW-1001 (Valid)</button>
+                <button class="sample-chip" data-sample-id="GGSIPU-2026-DSW-1003">GGSIPU-2026-DSW-1003 (Pending)</button>
+                <button class="sample-chip" data-sample-id="GGSIPU-2026-DSW-1005">GGSIPU-2026-DSW-1005 (Revoked)</button>
+                <button class="sample-chip" data-sample-id="GGSIPU-INVALID-9999">GGSIPU-INVALID-9999</button>
               </div>
             </div>
           </div>
@@ -251,7 +256,7 @@
           <div id="vtab-pdf" class="vtab-content">
             <div class="card">
               <h3>Instant PDF SHA-256 Hash Verifier</h3>
-              <p class="card-subtext">Drag & drop your certificate PDF. SHA-256 hash is computed in your browser locally using WebCrypto API.</p>
+              <p class="card-subtext">Drag & drop your certificate document. SHA-256 digest is computed in your browser locally using WebCrypto API.</p>
               <div class="dropzone" id="pdf-dropzone">
                 <i data-feather="upload-cloud" class="dropzone-icon"></i>
                 <p>Drag and drop certificate PDF or text document here</p>
@@ -260,7 +265,7 @@
                 <input type="file" id="pdf-file-input" accept=".pdf,.txt,.json,.png,.jpg" style="display:none;">
               </div>
               <div id="file-hash-output" class="hash-result-box" style="display:none;">
-                <span class="hash-label">Computed SHA-256 Hash:</span>
+                <span class="hash-label">Computed WebCrypto SHA-256 Hash:</span>
                 <code id="computed-hash-code">Calculating...</code>
               </div>
             </div>
@@ -350,7 +355,7 @@
       <div class="pane-header">
         <div>
           <h2>Bulk Certificate Generator & Batch Issuance</h2>
-          <p class="section-desc">Upload student data in bulk via CSV, auto-generate unique Certificate IDs, compute SHA-256 hashes, and submit for approval.</p>
+          <p class="section-desc">Upload student data in bulk via CSV. New certificates are initialized to <strong>Pending Approval</strong> state with Merkle tree proof calculation.</p>
         </div>
         <div>
           <a href="sample_students.csv" download class="btn btn-secondary">
@@ -369,8 +374,8 @@
             <input type="file" id="csv-file-input" accept=".csv" style="display:none;">
           </div>
           <div class="csv-paste-box">
-            <label class="form-label">Or paste CSV content directly:</label>
-            <textarea id="csv-paste-textarea" class="form-control" rows="5" placeholder="CertID,RollNumber,StudentName,Email,School,Course,EventName,IssueDate&#10;GGSIPU-2026-DSW-1006,20016403221,Vikas Kumar,vikas@ggsipu.edu,USICT,B.Tech,AI Workshop 2026,2026-08-18"></textarea>
+            <label class="form-label" for="csv-paste-textarea">Or paste CSV content directly:</label>
+            <textarea id="csv-paste-textarea" class="form-control" rows="5" placeholder="CertID,RollNumber,StudentName,Email,School,Course,EventName,IssueDate&#10;,20016403221,Vikas Kumar,vikas@ggsipu.edu,USICT,B.Tech CSE,AI Workshop 2026,2026-08-18"></textarea>
             <button class="btn btn-secondary" id="parse-pasted-csv-btn" style="margin-top:8px;">Parse Pasted Data</button>
           </div>
         </div>
@@ -381,7 +386,7 @@
         <div class="card-header">
           <h3>Step 2: Preview Batch Records (<span id="parsed-count-span">0</span> items)</h3>
           <button class="btn btn-success" id="process-batch-btn">
-            <i data-feather="cpu"></i> Generate SHA-256 & Submit Batch
+            <i data-feather="cpu"></i> Generate SHA-256 & Submit Batch to Approval Queue
           </button>
         </div>
         <div class="table-responsive">
@@ -389,12 +394,13 @@
             <thead>
               <tr>
                 <th>#</th>
-                <th>Suggested Cert ID</th>
+                <th>Unique Cert ID</th>
                 <th>Roll No</th>
                 <th>Student Name</th>
                 <th>Email</th>
                 <th>School</th>
                 <th>Event</th>
+                <th>Status (Initial)</th>
                 <th>Calculated SHA-256 Hash</th>
               </tr>
             </thead>
@@ -411,7 +417,7 @@
       <div class="pane-header">
         <div>
           <h2>Competent Authority Approval Queue</h2>
-          <p class="section-desc">Review pending certificate issuance requests, digitally sign using canvas, and authorize Google Workspace dispatch.</p>
+          <p class="section-desc">Review pending certificate requests, digitally sign using canvas, and authorize Google Workspace issuance.</p>
         </div>
       </div>
 
@@ -427,7 +433,7 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th><input type="checkbox" id="select-all-pending"></th>
+                <th><input type="checkbox" id="select-all-pending" checked></th>
                 <th>Cert ID</th>
                 <th>Student Name</th>
                 <th>Roll Number</th>
@@ -446,13 +452,13 @@
         <!-- DIGITAL SIGNATURE CAPTURE PAD -->
         <div class="signature-box">
           <h4>Competent Authority Digital Signature</h4>
-          <p class="card-subtext">Draw your signature below to embed on generated certificate PDFs.</p>
+          <p class="card-subtext">Draw your signature below to embed on generated certificate records.</p>
           <div class="signature-canvas-container">
             <canvas id="signature-pad" width="500" height="140"></canvas>
           </div>
           <div class="sig-btns">
             <button class="btn btn-secondary btn-sm" id="clear-sig-btn">Clear Signature</button>
-            <span class="sig-note">Signed as: <strong>Prof. Dean Students' Welfare (DSW)</strong></span>
+            <span class="sig-note">Signing as: <strong>Prof. Dean Students' Welfare (DSW)</strong></span>
           </div>
         </div>
       </div>
@@ -475,23 +481,23 @@
         <div class="card controls-card">
           <h3>Template Controls</h3>
           <div class="form-group">
-            <label class="form-label">Recipient Name</label>
+            <label class="form-label" for="cert-tpl-name">Recipient Name</label>
             <input type="text" id="cert-tpl-name" class="form-control" value="Aarav Sharma">
           </div>
           <div class="form-group">
-            <label class="form-label">Roll Number</label>
+            <label class="form-label" for="cert-tpl-roll">Roll Number</label>
             <input type="text" id="cert-tpl-roll" class="form-control" value="01216403221">
           </div>
           <div class="form-group">
-            <label class="form-label">Event / Activity Name</label>
+            <label class="form-label" for="cert-tpl-event">Event / Activity Name</label>
             <input type="text" id="cert-tpl-event" class="form-control" value="Smart India Hackathon 2026 Internal Round">
           </div>
           <div class="form-group">
-            <label class="form-label">School / Department</label>
+            <label class="form-label" for="cert-tpl-school">School / Department</label>
             <input type="text" id="cert-tpl-school" class="form-control" value="University School of Information & Communication Technology">
           </div>
           <div class="form-group">
-            <label class="form-label">Signatory Title</label>
+            <label class="form-label" for="cert-tpl-signatory">Signatory Title</label>
             <input type="text" id="cert-tpl-signatory" class="form-control" value="Prof. Dean, Directorate of Students' Welfare">
           </div>
         </div>
@@ -510,7 +516,7 @@
       <div class="pane-header">
         <div>
           <h2>Audit Log & Revocation Management</h2>
-          <p class="section-desc">Complete immutable audit trail of all certificate issuances, approvals, and revocations.</p>
+          <p class="section-desc">Complete immutable audit trail of all certificate issuances, state changes, approvals, and revocations.</p>
         </div>
       </div>
 
@@ -548,19 +554,47 @@
     <div class="modal-card">
       <div class="modal-header">
         <h3 class="text-danger"><i data-feather="alert-triangle"></i> Revoke Certificate</h3>
-        <button class="modal-close" onclick="closeRevocationModal()">&times;</button>
+        <button class="modal-close" id="close-revocation-modal-btn">&times;</button>
       </div>
       <div class="modal-body">
         <p>You are about to revoke certificate <strong id="modal-target-cert-id">GGSIPU-2026-DSW-1001</strong>.</p>
         <p class="text-warning">Revoking will permanently update the Google Sheets ledger status to <strong>Revoked</strong> and mark all public QR scans as invalid.</p>
         <div class="form-group" style="margin-top:16px;">
-          <label class="form-label">Mandatory Reason for Revocation:</label>
+          <label class="form-label" for="revocation-reason-input">Mandatory Reason for Revocation:</label>
           <textarea id="revocation-reason-input" class="form-control" rows="3" placeholder="e.g., Incorrect student record, disciplinary action, duplicate issuance..."></textarea>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeRevocationModal()">Cancel</button>
+        <button class="btn btn-secondary" id="cancel-revoke-btn">Cancel</button>
         <button class="btn btn-danger" id="confirm-revoke-btn">Confirm Revocation</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- API CONFIGURATION MODAL -->
+  <div class="modal-overlay" id="api-config-modal" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-feather="key"></i> API & Backend Configuration</h3>
+        <button class="modal-close" id="close-api-config-modal-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="card-subtext">Connect this portal to your deployed Google Apps Script Web App for real-time cloud ledger synchronization.</p>
+        <div class="form-group" style="margin-bottom:14px;">
+          <label class="form-label" for="gas-url-input">Google Apps Script Web App URL:</label>
+          <input type="text" id="gas-url-input" class="form-control" placeholder="https://script.google.com/macros/s/.../exec">
+        </div>
+        <div class="form-group" style="margin-bottom:14px;">
+          <label class="form-label" for="api-key-input">Admin API Key (Required for Issuing/Approving/Revoking):</label>
+          <input type="password" id="api-key-input" class="form-control" placeholder="Enter configured ADMIN_API_KEY">
+        </div>
+        <p style="font-size:0.75rem; color:var(--text-muted);">
+          * When URL is empty, the application runs in high-fidelity <strong>Local Simulation Mode</strong> with full state-machine guards and WebCrypto hashing.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancel-api-config-btn">Cancel</button>
+        <button class="btn btn-primary" id="save-api-config-btn">Save & Connect</button>
       </div>
     </div>
   </div>
