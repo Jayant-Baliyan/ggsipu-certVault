@@ -415,6 +415,14 @@ body {
   font-size: 0.875rem;
 }
 
+.form-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
 .form-select, .form-control {
   background: var(--bg-main);
   border: 1px solid var(--border-color);
@@ -424,6 +432,7 @@ body {
   font-family: var(--font-main);
   font-size: 0.875rem;
   outline: none;
+  width: 100%;
 }
 
 .table-responsive {
