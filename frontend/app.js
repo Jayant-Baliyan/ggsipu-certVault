@@ -1,16 +1,17 @@
 /**
  * GGSIPU CertVault Application State & Logic Manager
- * Single Page Application (SPA) Controller with Web Crypto SHA-256 & Apps Script Sync
+ * Unified Single Deployment: Public Verifier by Default + Staff Portal Google Authentication
  * 
- * Version: 2.0.0
- * Security Updates: Full Stored XSS Mitigation, State-Machine Guards, Collision-Free ID Generation,
- * Standardized Canonical WebCrypto SHA-256 & Merkle Tree Root Calculation, API Key Authentication.
+ * Version: 3.1.0
  */
 
 // Global Configuration & Deployment State
 let GAS_API_URL = localStorage.getItem("GGSIPU_GAS_API_URL") || "";
 let ADMIN_API_KEY = localStorage.getItem("GGSIPU_ADMIN_API_KEY") || "";
 const DEFAULT_SALT = "GGSIPU_SALT_2026_DSW_SECURE_HASH";
+
+// Authenticated Staff Session State (null when in public mode)
+let currentStaffSession = null;
 
 // Initial Pre-populated Master Ledger State (Synthetic GGSIPU Test Dataset)
 let mockLedger = [
@@ -103,9 +104,17 @@ let mockLedger = [
 
 // Initial Audit Logs State
 let mockAuditLogs = [
-  { Timestamp: "2026-08-15 14:30:00", EventType: "BATCH_ISSUANCE", Details: "Created batch of 2 certificates with status Pending. Merkle Root: 8f2d4e910a11...", PerformedBy: "dsw.admin@ggsipu.edu" },
-  { Timestamp: "2026-08-15 14:25:00", EventType: "APPROVAL", Details: "Certificate GGSIPU-2026-DSW-1001 transitioned from [Pending] -> [Approved] by Prof. Dean Students' Welfare (Dean DSW)", PerformedBy: "Prof. Dean Students' Welfare" },
-  { Timestamp: "2026-08-12 11:15:00", EventType: "REVOCATION", Details: "Certificate GGSIPU-2026-DSW-1005 transitioned from [Approved] -> [Revoked]. Reason: Duplicate registration entry", PerformedBy: "Prof. Dean Students' Welfare" }
+  { Timestamp: "2026-08-15 14:30:00", EventType: "BATCH_ISSUANCE", Details: "Created batch of 2 certificates with status Pending. Merkle Root: 8f2d4e910a11...", PerformedBy: "dsw.issuer@ggsipu.edu" },
+  { Timestamp: "2026-08-15 14:25:00", EventType: "APPROVAL", Details: "Certificate GGSIPU-2026-DSW-1001 transitioned from [Pending] -> [Approved] by Prof. Dean Students' Welfare (Dean DSW)", PerformedBy: "dean.dsw@ipu.ac.in" },
+  { Timestamp: "2026-08-12 11:15:00", EventType: "REVOCATION", Details: "Certificate GGSIPU-2026-DSW-1005 transitioned from [Approved] -> [Revoked]. Reason: Duplicate registration entry", PerformedBy: "dean.dsw@ipu.ac.in" }
+];
+
+// Initial Authorized Users Ledger State
+let mockUsers = [
+  { Email: "dsw.admin@ipu.ac.in", Role: "Admin", AddedOn: "2026-08-01" },
+  { Email: "dean.dsw@ipu.ac.in", Role: "Approver", AddedOn: "2026-08-01" },
+  { Email: "usict.issuer@ipu.ac.in", Role: "Issuer", AddedOn: "2026-08-05" },
+  { Email: "audit.viewer@ipu.ac.in", Role: "Viewer", AddedOn: "2026-08-10" }
 ];
 
 let parsedCsvRecords = [];
@@ -113,7 +122,7 @@ let html5QrCode = null;
 let currentRevocationCertId = "";
 
 /**
- * Robust HTML Sanitizer to prevent Stored & Reflected XSS
+ * Robust HTML Sanitizer
  */
 function escapeHtml(str) {
   if (str === null || str === undefined) return "";
@@ -126,7 +135,7 @@ function escapeHtml(str) {
 }
 
 /**
- * Standard WebCrypto SHA-256 Hex Hash computation
+ * Standard WebCrypto SHA-256 Hex Hash
  */
 async function computeSha256(text) {
   const encoder = new TextEncoder();
@@ -137,7 +146,7 @@ async function computeSha256(text) {
 }
 
 /**
- * Computes deterministic SHA-256 hash using the standardized canonical format
+ * Canonical SHA-256 hash
  */
 async function computeCertificateRecordHash(record) {
   const certId = String(record.CertID || "").trim();
@@ -160,7 +169,7 @@ async function computeCertificateRecordHash(record) {
 }
 
 /**
- * Computes Merkle Tree Root from an array of SHA-256 hashes matching Apps Script CryptoEngine
+ * Merkle Tree Root Calculation
  */
 async function computeMerkleRoot(hashes) {
   if (!hashes || hashes.length === 0) return "";
@@ -175,7 +184,6 @@ async function computeMerkleRoot(hashes) {
         const combined = currentLayer[i] + currentLayer[i + 1];
         nextLayer.push(await computeSha256(combined));
       } else {
-        // If odd number, duplicate last hash
         const combinedOdd = currentLayer[i] + currentLayer[i];
         nextLayer.push(await computeSha256(combinedOdd));
       }
@@ -187,7 +195,7 @@ async function computeMerkleRoot(hashes) {
 }
 
 /**
- * High-Entropy Collision-Free Unique Certificate ID Generator
+ * Unique Certificate ID Generator
  */
 function generateUniqueCertId(existingSet) {
   const year = new Date().getFullYear();
@@ -205,15 +213,18 @@ function generateUniqueCertId(existingSet) {
 // INITIALIZATION
 document.addEventListener("DOMContentLoaded", async () => {
   feather.replace();
+
   setupNavigation();
   setupThemeToggle();
-  setupFilters();
+  setupStaffAuthentication();
   setupVerifier();
+  setupFilters();
   setupCsvUploader();
   setupApprovalQueue();
   setupSignaturePad();
   setupCertificateCanvas();
   setupRevocationModal();
+  setupStaffUserManagement();
   setupApiConfigModal();
   updateConnectionStatusUI();
 
@@ -222,16 +233,34 @@ document.addEventListener("DOMContentLoaded", async () => {
     c.SHA256Hash = await computeCertificateRecordHash(c);
   }
 
+  // Restore saved staff session if any
+  const savedSession = sessionStorage.getItem("GGSIPU_STAFF_AUTH");
+  if (savedSession) {
+    try {
+      const auth = JSON.parse(savedSession);
+      applyStaffLoginState(auth);
+    } catch (e) {}
+  }
+
+  // Check URL parameters for direct certificate verification (e.g. ?certId=...)
+  const urlParams = new URLSearchParams(window.location.search);
+  const certId = urlParams.get("certId");
+  if (certId) {
+    document.getElementById("cert-id-input").value = certId;
+    switchToTab("verifier-tab");
+    executeVerificationById(certId);
+  }
+
   renderMasterLedger();
   renderMetrics();
   renderApprovalQueue();
   renderAuditLogs();
+  renderStaffUsers();
 });
 
-// NAVIGATION TAB SWITCHING
+// NAVIGATION
 function setupNavigation() {
-  const navBtns = document.querySelectorAll(".nav-btn");
-  navBtns.forEach(btn => {
+  document.querySelectorAll(".nav-btn[data-tab]").forEach(btn => {
     btn.addEventListener("click", () => {
       const tabId = btn.getAttribute("data-tab");
       switchToTab(tabId);
@@ -245,6 +274,12 @@ function setupNavigation() {
 }
 
 function switchToTab(tabId) {
+  // If attempting to switch to a staff tab while unauthenticated, open login modal
+  if (tabId !== "verifier-tab" && !currentStaffSession) {
+    openStaffAuthModal();
+    return;
+  }
+
   document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
   document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
 
@@ -259,9 +294,10 @@ function switchToTab(tabId) {
   }
 }
 
-// LIGHT / DARK THEME TOGGLE
+// THEME TOGGLE
 function setupThemeToggle() {
   const toggleBtn = document.getElementById("theme-toggle");
+  if (!toggleBtn) return;
   toggleBtn.addEventListener("click", () => {
     document.body.classList.toggle("dark-mode");
     const isDark = document.body.classList.contains("dark-mode");
@@ -271,122 +307,146 @@ function setupThemeToggle() {
   });
 }
 
-// MASTER LEDGER RENDER & METRICS
-function renderMetrics() {
-  const total = mockLedger.length;
-  const verified = mockLedger.filter(c => c.Status === "Approved").length;
-  const pending = mockLedger.filter(c => c.Status === "Pending").length;
-  const revoked = mockLedger.filter(c => c.Status === "Revoked").length;
+// STAFF AUTHENTICATION & LOGIN/LOGOUT
+function setupStaffAuthentication() {
+  const loginBtn = document.getElementById("staff-login-btn");
+  const logoutBtn = document.getElementById("staff-logout-btn");
+  const modal = document.getElementById("staff-auth-modal");
+  const closeBtn = document.getElementById("close-auth-modal-btn");
+  const cancelBtn = document.getElementById("cancel-auth-modal-btn");
+  const confirmBtn = document.getElementById("confirm-auth-btn");
 
-  document.getElementById("metric-total-certs").textContent = total.toLocaleString();
-  document.getElementById("metric-verified-count").textContent = verified.toLocaleString();
-  document.getElementById("metric-pending-count").textContent = pending.toString();
-  document.getElementById("metric-revoked-count").textContent = revoked.toString();
-  document.getElementById("pending-count-badge").textContent = pending.toString();
-  document.getElementById("ledger-total-badge").textContent = `${total} Certificates`;
-}
+  if (loginBtn) loginBtn.addEventListener("click", openStaffAuthModal);
 
-function renderMasterLedger() {
-  const tbody = document.getElementById("ledger-table-body");
-  const searchQuery = (document.getElementById("ledger-search-input").value || "").toLowerCase().trim();
-  const schoolFilter = document.getElementById("school-filter-select").value;
-  const statusFilter = document.getElementById("status-filter-select").value;
+  if (closeBtn) closeBtn.addEventListener("click", closeStaffAuthModal);
+  if (cancelBtn) cancelBtn.addEventListener("click", closeStaffAuthModal);
 
-  const filtered = mockLedger.filter(item => {
-    const matchesSearch = (item.CertID || "").toLowerCase().includes(searchQuery) ||
-                          (item.StudentName || "").toLowerCase().includes(searchQuery) ||
-                          (item.RollNumber || "").toLowerCase().includes(searchQuery) ||
-                          (item.EventName || "").toLowerCase().includes(searchQuery);
-    const matchesSchool = (schoolFilter === "ALL") || (item.School === schoolFilter);
-    const matchesStatus = (statusFilter === "ALL") || (item.Status === statusFilter);
-    return matchesSearch && matchesSchool && matchesStatus;
+  // Quick select bot / test accounts
+  document.querySelectorAll(".quick-auth-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const email = chip.getAttribute("data-email");
+      document.getElementById("auth-email-input").value = email;
+    });
   });
 
-  tbody.innerHTML = "";
+  if (confirmBtn) {
+    confirmBtn.addEventListener("click", async () => {
+      const email = document.getElementById("auth-email-input").value.trim().toLowerCase();
+      if (!email) {
+        showToast("Please enter a Google Workspace email address", "danger");
+        return;
+      }
 
-  if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:var(--text-muted);">No matching certificate records found in ledger.</td></tr>`;
-    return;
+      showToast("Authenticating with Google Account: " + email + "...");
+
+      // Check via Google Apps Script RPC if available
+      if (typeof google !== "undefined" && google.script && google.script.run) {
+        google.script.run
+          .withSuccessHandler((res) => {
+            if (res && res.status === "success") {
+              const authData = { email: res.email, role: res.role };
+              sessionStorage.setItem("GGSIPU_STAFF_AUTH", JSON.stringify(authData));
+              applyStaffLoginState(authData);
+              closeStaffAuthModal();
+              showToast(`Welcome back, ${res.email} (${res.role})!`, "success");
+              switchToTab("dashboard-tab");
+            } else {
+              showToast(res.message || "Authentication failed: Email not registered.", "danger");
+            }
+          })
+          .withFailureHandler((err) => {
+            showToast("Server authentication error: " + err.message, "danger");
+          })
+          .apiAuthenticateStaff(email);
+        return;
+      }
+
+      // Local / Bot simulation check against Users ledger
+      const foundUser = mockUsers.find(u => u.Email.toLowerCase() === email);
+      if (foundUser) {
+        const authData = { email: foundUser.Email, role: foundUser.Role };
+        sessionStorage.setItem("GGSIPU_STAFF_AUTH", JSON.stringify(authData));
+        applyStaffLoginState(authData);
+        closeStaffAuthModal();
+        showToast(`Signed in successfully as ${foundUser.Role} (${foundUser.Email})!`, "success");
+        switchToTab("dashboard-tab");
+      } else {
+        showToast(`Access Denied: '${email}' is not in the Users ledger.`, "danger");
+      }
+    });
   }
 
-  filtered.forEach(rec => {
-    const tr = document.createElement("tr");
-    
-    let statusClass = "badge-approved";
-    if (rec.Status === "Pending") statusClass = "badge-pending";
-    if (rec.Status === "Revoked") statusClass = "badge-revoked";
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", () => {
+      sessionStorage.removeItem("GGSIPU_STAFF_AUTH");
+      currentStaffSession = null;
+      resetToPublicMode();
+      showToast("Signed out of Staff Portal. Returned to Public Verifier.", "info");
+      switchToTab("verifier-tab");
+    });
+  }
+}
 
-    const safeCertId = escapeHtml(rec.CertID);
-    const safeStudentName = escapeHtml(rec.StudentName);
-    const safeRollNumber = escapeHtml(rec.RollNumber);
-    const safeSchool = escapeHtml(rec.School);
-    const safeCourse = escapeHtml(rec.Course);
-    const safeEventName = escapeHtml(rec.EventName);
-    const safeIssueDate = escapeHtml(rec.IssueDate);
-    const safeStatus = escapeHtml(rec.Status);
-    const safeHash = escapeHtml(rec.SHA256Hash || "");
-    const shortHash = safeHash.length > 16 ? safeHash.substring(0, 16) + "..." : safeHash;
+function openStaffAuthModal() {
+  document.getElementById("staff-auth-modal").style.display = "flex";
+}
 
-    tr.innerHTML = `
-      <td><strong>${safeCertId}</strong></td>
-      <td>
-        <div style="font-weight:700;">${safeStudentName}</div>
-        <div style="font-size:0.75rem; color:var(--text-muted);">Roll: ${safeRollNumber}</div>
-      </td>
-      <td>${safeSchool} <span style="font-size:0.75rem; color:var(--text-muted); display:block;">${safeCourse}</span></td>
-      <td>${safeEventName}</td>
-      <td>${safeIssueDate}</td>
-      <td><span class="badge ${statusClass}">${safeStatus}</span></td>
-      <td><code>${shortHash}</code></td>
-      <td>
-        <div style="display:flex; gap:6px;">
-          <button class="btn btn-secondary btn-sm verify-row-btn" data-cert-id="${safeCertId}" title="Verify in Public Portal">
-            <i data-feather="shield"></i> Verify
-          </button>
-          ${rec.Status !== 'Revoked' ? `
-            <button class="btn btn-danger btn-sm revoke-row-btn" data-cert-id="${safeCertId}" title="Revoke Certificate">
-              <i data-feather="slash"></i> Revoke
-            </button>
-          ` : ''}
-        </div>
-      </td>
-    `;
-    tbody.appendChild(tr);
+function closeStaffAuthModal() {
+  document.getElementById("staff-auth-modal").style.display = "none";
+}
+
+function applyStaffLoginState(auth) {
+  currentStaffSession = auth;
+  const role = (auth.role || "Viewer").toLowerCase();
+
+  // Hide login button, show user badge
+  document.getElementById("staff-login-btn").style.display = "none";
+  const userBadge = document.getElementById("staff-user-badge");
+  userBadge.style.display = "flex";
+  document.getElementById("active-user-email").textContent = auth.email;
+  
+  const rolePill = document.getElementById("active-user-role");
+  rolePill.textContent = auth.role.toUpperCase();
+  rolePill.className = `role-pill ${role}`;
+
+  // Unlock staff navigation tabs based on role permissions
+  document.querySelectorAll(".staff-tab").forEach(tabBtn => {
+    const classList = Array.from(tabBtn.classList);
+    const requiredRoles = classList
+      .filter(c => c.startsWith("role-perm-"))
+      .map(c => c.replace("role-perm-", "").toLowerCase());
+
+    if (requiredRoles.includes("all") || requiredRoles.includes(role) || role === "admin") {
+      tabBtn.style.display = "inline-flex";
+    } else {
+      tabBtn.style.display = "none";
+    }
   });
 
-  // Attach event handlers safely without raw string interpolation
-  tbody.querySelectorAll(".verify-row-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const certId = btn.getAttribute("data-cert-id");
-      quickFillVerify(certId);
-    });
-  });
-
-  tbody.querySelectorAll(".revoke-row-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const certId = btn.getAttribute("data-cert-id");
-      openRevocationModal(certId);
-    });
+  // Admin buttons (Config, Add User)
+  document.querySelectorAll(".role-perm-admin").forEach(el => {
+    if (role === "admin") {
+      el.style.display = "";
+    } else {
+      el.style.display = "none";
+    }
   });
 
   feather.replace();
 }
 
-function setupFilters() {
-  document.getElementById("ledger-search-input").addEventListener("input", renderMasterLedger);
-  document.getElementById("school-filter-select").addEventListener("change", renderMasterLedger);
-  document.getElementById("status-filter-select").addEventListener("change", renderMasterLedger);
-  document.getElementById("refresh-data-btn").addEventListener("click", async () => {
-    if (GAS_API_URL) {
-      await fetchRemoteLedger();
-    }
-    renderMasterLedger();
-    renderMetrics();
-    showToast("Master ledger refreshed");
-  });
+function resetToPublicMode() {
+  document.getElementById("staff-login-btn").style.display = "inline-flex";
+  document.getElementById("staff-user-badge").style.display = "none";
+
+  // Hide all staff tabs
+  document.querySelectorAll(".staff-tab").forEach(t => t.style.display = "none");
+  document.querySelectorAll(".role-perm-admin").forEach(el => el.style.display = "none");
+
+  feather.replace();
 }
 
-// PUBLIC VERIFICATION PORTAL CONTROL
+// PUBLIC VERIFICATION PORTAL
 function setupVerifier() {
   const vtabs = document.querySelectorAll(".vtab-btn");
   vtabs.forEach(btn => {
@@ -400,21 +460,19 @@ function setupVerifier() {
     });
   });
 
-  // Sample ID chips
   document.querySelectorAll(".sample-chip").forEach(chip => {
     chip.addEventListener("click", () => {
       const sampleId = chip.getAttribute("data-sample-id");
-      quickFillVerify(sampleId);
+      document.getElementById("cert-id-input").value = sampleId;
+      executeVerificationById(sampleId);
     });
   });
 
-  // Cert ID search button
   document.getElementById("verify-id-btn").addEventListener("click", () => {
     const certId = document.getElementById("cert-id-input").value.trim();
     executeVerificationById(certId);
   });
 
-  // Enter key in input
   document.getElementById("cert-id-input").addEventListener("keypress", (e) => {
     if (e.key === "Enter") {
       const certId = document.getElementById("cert-id-input").value.trim();
@@ -422,11 +480,9 @@ function setupVerifier() {
     }
   });
 
-  // QR Code Scanner setup
   document.getElementById("start-qr-btn").addEventListener("click", startQrScanner);
   document.getElementById("stop-qr-btn").addEventListener("click", stopQrScanner);
 
-  // PDF Dropzone Drag & Drop
   const dropzone = document.getElementById("pdf-dropzone");
   const fileInput = document.getElementById("pdf-file-input");
 
@@ -454,19 +510,14 @@ function setupVerifier() {
   });
 }
 
-function quickFillVerify(certId) {
-  switchToTab("verifier-tab");
-  document.getElementById("cert-id-input").value = certId;
-  executeVerificationById(certId);
-}
-
 async function executeVerificationById(certId) {
   if (!certId) {
     showToast("Please enter a Certificate ID", "danger");
     return;
   }
 
-  // If connected to remote Apps Script, verify against backend
+  showToast("Verifying Certificate ID: " + certId + "...");
+
   if (GAS_API_URL) {
     try {
       const response = await fetch(`${GAS_API_URL}?action=verifyId&certId=${encodeURIComponent(certId)}`);
@@ -483,7 +534,6 @@ async function executeVerificationById(certId) {
     }
   }
 
-  // Local ledger lookup with cryptographic integrity check
   const found = mockLedger.find(c => (c.CertID || "").trim().toLowerCase() === certId.trim().toLowerCase());
   if (found) {
     const recomputedHash = await computeCertificateRecordHash(found);
@@ -526,7 +576,7 @@ function renderVerificationResult(record, queryId, integrityStatus = "PASSED") {
     header.className = "verification-badge-header revoked";
     icon.setAttribute("data-feather", "alert-triangle");
     title.textContent = "TAMPER ALERT: INTEGRITY CHECK FAILED";
-    subtitle.textContent = "Record metadata in ledger has been modified after hash generation!";
+    subtitle.textContent = "Record metadata in ledger does not match cryptographic SHA-256 seal!";
 
     document.getElementById("res-cert-id").textContent = record.CertID;
     document.getElementById("res-student-name").textContent = record.StudentName;
@@ -542,7 +592,7 @@ function renderVerificationResult(record, queryId, integrityStatus = "PASSED") {
   } else if (record.Status === "Revoked") {
     header.className = "verification-badge-header revoked";
     icon.setAttribute("data-feather", "slash");
-    title.textContent = "CERTIFICATE REVOKED";
+    title.textContent = "CERTIFICATE FORMALLY REVOKED";
     subtitle.textContent = "This certificate was formally revoked by GGSIPU Competent Authority";
 
     document.getElementById("res-cert-id").textContent = record.CertID;
@@ -551,7 +601,7 @@ function renderVerificationResult(record, queryId, integrityStatus = "PASSED") {
     document.getElementById("res-school").textContent = record.School;
     document.getElementById("res-event").textContent = record.EventName;
     document.getElementById("res-issue-date").textContent = record.IssueDate;
-    document.getElementById("res-approved-by").textContent = record.ApprovedBy || "Competent Authority";
+    document.getElementById("res-approved-by").textContent = record.ApprovedBy || "Dean DSW";
     document.getElementById("res-integrity").textContent = "INVALID (REVOKED)";
     document.getElementById("res-integrity").className = "d-value text-danger";
     document.getElementById("res-sha256").textContent = record.SHA256Hash;
@@ -622,11 +672,10 @@ function startQrScanner() {
         }
       }
       stopQrScanner();
+      document.getElementById("cert-id-input").value = certId;
       executeVerificationById(certId);
     },
-    () => {
-      // Ignore scan loop frames
-    }
+    () => {}
   ).catch(err => {
     showToast("Webcam access denied or unavailable", "danger");
     stopQrScanner();
@@ -646,7 +695,7 @@ function stopQrScanner() {
   }
 }
 
-// WEBCRYPTO CLIENT-SIDE SHA-256 PDF HASHER
+// WEBCRYPTO SHA-256 PDF HASHER
 async function processPdfFile(file) {
   const hashBox = document.getElementById("file-hash-output");
   const codeElem = document.getElementById("computed-hash-code");
@@ -662,7 +711,6 @@ async function processPdfFile(file) {
     codeElem.textContent = hexHash;
     showToast("Document SHA-256 Hash computed successfully!");
 
-    // Search matching hash in ledger or backend
     if (GAS_API_URL) {
       try {
         const response = await fetch(`${GAS_API_URL}?action=verifyHash&hash=${encodeURIComponent(hexHash)}`);
@@ -687,10 +735,133 @@ async function processPdfFile(file) {
   }
 }
 
+// METRICS & MASTER LEDGER
+function renderMetrics() {
+  const total = mockLedger.length;
+  const verified = mockLedger.filter(c => c.Status === "Approved").length;
+  const pending = mockLedger.filter(c => c.Status === "Pending").length;
+  const revoked = mockLedger.filter(c => c.Status === "Revoked").length;
+
+  document.getElementById("metric-total-certs").textContent = total.toLocaleString();
+  document.getElementById("metric-verified-count").textContent = verified.toLocaleString();
+  document.getElementById("metric-pending-count").textContent = pending.toString();
+  document.getElementById("metric-revoked-count").textContent = revoked.toString();
+  document.getElementById("pending-count-badge").textContent = pending.toString();
+  document.getElementById("ledger-total-badge").textContent = `${total} Certificates`;
+}
+
+function renderMasterLedger() {
+  const tbody = document.getElementById("ledger-table-body");
+  if (!tbody) return;
+
+  const searchQuery = (document.getElementById("ledger-search-input").value || "").toLowerCase().trim();
+  const schoolFilter = document.getElementById("school-filter-select").value;
+  const statusFilter = document.getElementById("status-filter-select").value;
+
+  const filtered = mockLedger.filter(item => {
+    const matchesSearch = (item.CertID || "").toLowerCase().includes(searchQuery) ||
+                          (item.StudentName || "").toLowerCase().includes(searchQuery) ||
+                          (item.RollNumber || "").toLowerCase().includes(searchQuery) ||
+                          (item.EventName || "").toLowerCase().includes(searchQuery);
+    const matchesSchool = (schoolFilter === "ALL") || (item.School === schoolFilter);
+    const matchesStatus = (statusFilter === "ALL") || (item.Status === statusFilter);
+    return matchesSearch && matchesSchool && matchesStatus;
+  });
+
+  tbody.innerHTML = "";
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:var(--text-muted);">No matching certificate records found in ledger.</td></tr>`;
+    return;
+  }
+
+  const role = currentStaffSession ? currentStaffSession.role.toLowerCase() : "viewer";
+  const canRevoke = (role === "admin" || role === "approver");
+
+  filtered.forEach(rec => {
+    const tr = document.createElement("tr");
+    
+    let statusClass = "badge-approved";
+    if (rec.Status === "Pending") statusClass = "badge-pending";
+    if (rec.Status === "Revoked") statusClass = "badge-revoked";
+
+    const safeCertId = escapeHtml(rec.CertID);
+    const safeStudentName = escapeHtml(rec.StudentName);
+    const safeRollNumber = escapeHtml(rec.RollNumber);
+    const safeSchool = escapeHtml(rec.School);
+    const safeCourse = escapeHtml(rec.Course);
+    const safeEventName = escapeHtml(rec.EventName);
+    const safeIssueDate = escapeHtml(rec.IssueDate);
+    const safeStatus = escapeHtml(rec.Status);
+    const safeHash = escapeHtml(rec.SHA256Hash || "");
+    const shortHash = safeHash.length > 16 ? safeHash.substring(0, 16) + "..." : safeHash;
+
+    tr.innerHTML = `
+      <td><strong>${safeCertId}</strong></td>
+      <td>
+        <div style="font-weight:700;">${safeStudentName}</div>
+        <div style="font-size:0.75rem; color:var(--text-muted);">Roll: ${safeRollNumber}</div>
+      </td>
+      <td>${safeSchool} <span style="font-size:0.75rem; color:var(--text-muted); display:block;">${safeCourse}</span></td>
+      <td>${safeEventName}</td>
+      <td>${safeIssueDate}</td>
+      <td><span class="badge ${statusClass}">${safeStatus}</span></td>
+      <td><code>${shortHash}</code></td>
+      <td>
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-secondary btn-sm verify-row-btn" data-cert-id="${safeCertId}" title="Verify in Public Portal">
+            <i data-feather="shield"></i> Verify
+          </button>
+          ${(canRevoke && rec.Status !== 'Revoked') ? `
+            <button class="btn btn-danger btn-sm revoke-row-btn" data-cert-id="${safeCertId}" title="Revoke Certificate">
+              <i data-feather="slash"></i> Revoke
+            </button>
+          ` : ''}
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll(".verify-row-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const certId = btn.getAttribute("data-cert-id");
+      switchToTab("verifier-tab");
+      document.getElementById("cert-id-input").value = certId;
+      executeVerificationById(certId);
+    });
+  });
+
+  tbody.querySelectorAll(".revoke-row-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const certId = btn.getAttribute("data-cert-id");
+      openRevocationModal(certId);
+    });
+  });
+
+  feather.replace();
+}
+
+function setupFilters() {
+  document.getElementById("ledger-search-input").addEventListener("input", renderMasterLedger);
+  document.getElementById("school-filter-select").addEventListener("change", renderMasterLedger);
+  document.getElementById("status-filter-select").addEventListener("change", renderMasterLedger);
+  document.getElementById("refresh-data-btn").addEventListener("click", async () => {
+    if (GAS_API_URL) {
+      await fetchRemoteLedger();
+    }
+    renderMasterLedger();
+    renderMetrics();
+    showToast("Master ledger refreshed");
+  });
+}
+
 // BULK CSV PARSER & ISSUER
 function setupCsvUploader() {
   const dropzone = document.getElementById("csv-dropzone");
   const fileInput = document.getElementById("csv-file-input");
+
+  if (!dropzone) return;
 
   dropzone.addEventListener("click", () => fileInput.click());
 
@@ -736,16 +907,13 @@ async function parseCsvString(csvText) {
       obj[h] = values[idx] || "";
     });
 
-    // Ensure high-entropy collision-free CertID
     if (!obj.CertID || existingIdsSet.has(obj.CertID.toUpperCase())) {
       obj.CertID = generateUniqueCertId(existingIdsSet);
     }
     existingIdsSet.add(obj.CertID.toUpperCase());
 
     obj.IssueDate = obj.IssueDate || new Date().toISOString().split("T")[0];
-    obj.Status = "Pending"; // Initial State Machine Rule
-
-    // Compute standardized WebCrypto SHA-256 hash
+    obj.Status = "Pending";
     obj.SHA256Hash = await computeCertificateRecordHash(obj);
 
     parsedCsvRecords.push(obj);
@@ -792,6 +960,7 @@ async function processCsvBatchIssuance() {
   const batchMerkleRoot = await computeMerkleRoot(hashesList);
 
   const newRecords = [];
+  const issuer = currentStaffSession ? currentStaffSession.email : "Authorized Staff";
 
   for (let rec of parsedCsvRecords) {
     const newRecord = {
@@ -803,11 +972,11 @@ async function processCsvBatchIssuance() {
       Course: rec.Course || "B.Tech",
       EventName: rec.EventName || rec.Event || "University Event",
       IssueDate: rec.IssueDate || new Date().toISOString().split("T")[0],
-      Status: "Pending", // State Machine: Enforce Pending status upon creation
+      Status: "Pending",
       SHA256Hash: rec.SHA256Hash,
       MerkleRoot: batchMerkleRoot,
       DrivePdfUrl: `https://drive.google.com/file/d/mock_${rec.CertID}/view`,
-      QrVerificationUrl: `https://ggsipu.ac.in/verify?certId=${encodeURIComponent(rec.CertID)}&hash=${encodeURIComponent(rec.SHA256Hash)}`,
+      QrVerificationUrl: `https://ggsipu.ac.in/verify?certId=${encodeURIComponent(rec.CertID)}`,
       ApprovedBy: "",
       ApprovalDate: ""
     };
@@ -815,7 +984,6 @@ async function processCsvBatchIssuance() {
     mockLedger.unshift(newRecord);
   }
 
-  // If connected to remote Apps Script, push batch with API Key
   if (GAS_API_URL) {
     try {
       const res = await fetch(GAS_API_URL, {
@@ -825,7 +993,7 @@ async function processCsvBatchIssuance() {
           action: "createCertificates",
           apiKey: ADMIN_API_KEY,
           records: newRecords,
-          issuerEmail: "dsw.issuer@ggsipu.edu"
+          issuerEmail: issuer
         })
       });
       const remoteData = await res.json();
@@ -837,12 +1005,11 @@ async function processCsvBatchIssuance() {
     }
   }
 
-  // Log audit
   mockAuditLogs.unshift({
     Timestamp: new Date().toLocaleString(),
     EventType: "BATCH_ISSUANCE",
     Details: `Created batch of ${parsedCsvRecords.length} certificates with status Pending. Merkle Root: ${batchMerkleRoot}`,
-    PerformedBy: "dsw.issuer@ggsipu.edu"
+    PerformedBy: issuer
   });
 
   renderMasterLedger();
@@ -859,7 +1026,10 @@ async function processCsvBatchIssuance() {
 
 // APPROVAL QUEUE
 function setupApprovalQueue() {
-  document.getElementById("approve-all-selected-btn").addEventListener("click", approveSelectedBatch);
+  const approveAllBtn = document.getElementById("approve-all-selected-btn");
+  if (approveAllBtn) {
+    approveAllBtn.addEventListener("click", approveSelectedBatch);
+  }
   
   const selectAllChk = document.getElementById("select-all-pending");
   if (selectAllChk) {
@@ -873,8 +1043,9 @@ function setupApprovalQueue() {
 
 function renderApprovalQueue() {
   const tbody = document.getElementById("approval-queue-tbody");
-  const pending = mockLedger.filter(c => c.Status === "Pending");
+  if (!tbody) return;
 
+  const pending = mockLedger.filter(c => c.Status === "Pending");
   tbody.innerHTML = "";
 
   if (pending.length === 0) {
@@ -927,7 +1098,6 @@ async function approveSingleCert(certId) {
     return;
   }
 
-  // State Machine Guard: Cannot approve revoked cert
   if (target.Status === "Revoked") {
     showToast(`State Violation: Cannot approve certificate ${certId} because it is REVOKED.`, "danger");
     return;
@@ -938,11 +1108,11 @@ async function approveSingleCert(certId) {
     return;
   }
 
+  const approverName = currentStaffSession ? currentStaffSession.email : "Dean DSW";
   target.Status = "Approved";
-  target.ApprovedBy = "Prof. Dean Students' Welfare (Dean DSW)";
+  target.ApprovedBy = approverName + " (Authorized Approver)";
   target.ApprovalDate = new Date().toISOString().split("T")[0];
 
-  // Remote Apps Script Sync if configured
   if (GAS_API_URL) {
     try {
       await fetch(GAS_API_URL, {
@@ -952,7 +1122,7 @@ async function approveSingleCert(certId) {
           action: "approveCertificate",
           apiKey: ADMIN_API_KEY,
           certId: certId,
-          approverName: "Prof. Dean Students' Welfare",
+          approverName: approverName,
           approverRole: "Dean DSW"
         })
       });
@@ -964,8 +1134,8 @@ async function approveSingleCert(certId) {
   mockAuditLogs.unshift({
     Timestamp: new Date().toLocaleString(),
     EventType: "APPROVAL",
-    Details: `Certificate ${certId} transitioned from [Pending] -> [Approved] by Prof. Dean Students' Welfare`,
-    PerformedBy: "Prof. Dean Students' Welfare"
+    Details: `Certificate ${certId} transitioned from [Pending] -> [Approved] by ${approverName}`,
+    PerformedBy: approverName
   });
 
   renderMasterLedger();
@@ -984,13 +1154,14 @@ async function approveSelectedBatch() {
 
   let approvedCount = 0;
   const today = new Date().toISOString().split("T")[0];
+  const approverName = currentStaffSession ? currentStaffSession.email : "Dean DSW";
 
   for (let chk of checkboxes) {
     const certId = chk.value;
     const target = mockLedger.find(c => c.CertID === certId);
     if (target && target.Status === "Pending") {
       target.Status = "Approved";
-      target.ApprovedBy = "Prof. Dean Students' Welfare (Dean DSW)";
+      target.ApprovedBy = approverName + " (Dean DSW)";
       target.ApprovalDate = today;
       approvedCount++;
 
@@ -1003,7 +1174,7 @@ async function approveSelectedBatch() {
               action: "approveCertificate",
               apiKey: ADMIN_API_KEY,
               certId: certId,
-              approverName: "Prof. Dean Students' Welfare",
+              approverName: approverName,
               approverRole: "Dean DSW"
             })
           });
@@ -1015,8 +1186,8 @@ async function approveSelectedBatch() {
   mockAuditLogs.unshift({
     Timestamp: new Date().toLocaleString(),
     EventType: "APPROVAL",
-    Details: `Batch approved ${approvedCount} certificates by Prof. Dean Students' Welfare`,
-    PerformedBy: "Prof. Dean Students' Welfare"
+    Details: `Batch approved ${approvedCount} certificates by ${approverName}`,
+    PerformedBy: approverName
   });
 
   renderMasterLedger();
@@ -1029,6 +1200,8 @@ async function approveSelectedBatch() {
 // DIGITAL SIGNATURE PAD
 function setupSignaturePad() {
   const canvas = document.getElementById("signature-pad");
+  if (!canvas) return;
+
   const ctx = canvas.getContext("2d");
   let drawing = false;
 
@@ -1052,12 +1225,15 @@ function setupSignaturePad() {
   canvas.addEventListener("mouseup", () => drawing = false);
   canvas.addEventListener("mouseleave", () => drawing = false);
 
-  document.getElementById("clear-sig-btn").addEventListener("click", () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  });
+  const clearBtn = document.getElementById("clear-sig-btn");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    });
+  }
 }
 
-// CERTIFICATE CANVAS DESIGNER PREVIEW
+// CERTIFICATE CANVAS DESIGNER
 function setupCertificateCanvas() {
   const inputs = ["cert-tpl-name", "cert-tpl-roll", "cert-tpl-event", "cert-tpl-school", "cert-tpl-signatory"];
   inputs.forEach(id => {
@@ -1065,13 +1241,16 @@ function setupCertificateCanvas() {
     if (el) el.addEventListener("input", renderCertificateCanvas);
   });
 
-  document.getElementById("download-canvas-cert-btn").addEventListener("click", () => {
-    const canvas = document.getElementById("cert-canvas");
-    const link = document.createElement("a");
-    link.download = "GGSIPU_Certificate_Preview.png";
-    link.href = canvas.toDataURL("image/png");
-    link.click();
-  });
+  const dlBtn = document.getElementById("download-canvas-cert-btn");
+  if (dlBtn) {
+    dlBtn.addEventListener("click", () => {
+      const canvas = document.getElementById("cert-canvas");
+      const link = document.createElement("a");
+      link.download = "GGSIPU_Certificate_Preview.png";
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    });
+  }
 }
 
 function renderCertificateCanvas() {
@@ -1085,11 +1264,9 @@ function renderCertificateCanvas() {
   const school = document.getElementById("cert-tpl-school").value || "University School";
   const signatory = document.getElementById("cert-tpl-signatory").value || "Dean DSW";
 
-  // Background Fill
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Outer Border Frame
   ctx.strokeStyle = "#1e3a8a";
   ctx.lineWidth = 12;
   ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
@@ -1098,7 +1275,6 @@ function renderCertificateCanvas() {
   ctx.lineWidth = 3;
   ctx.strokeRect(32, 32, canvas.width - 64, canvas.height - 64);
 
-  // Header Title
   ctx.fillStyle = "#1e3a8a";
   ctx.font = "bold 24px 'Plus Jakarta Sans', sans-serif";
   ctx.textAlign = "center";
@@ -1112,7 +1288,6 @@ function renderCertificateCanvas() {
   ctx.font = "italic 13px sans-serif";
   ctx.fillText("Sector 16-C, Dwarka, New Delhi - 110078", canvas.width / 2, 130);
 
-  // Certificate Header Line
   ctx.fillStyle = "#0f172a";
   ctx.font = "bold 32px 'Plus Jakarta Sans', sans-serif";
   ctx.fillText("CERTIFICATE OF ACHIEVEMENT", canvas.width / 2, 185);
@@ -1121,8 +1296,7 @@ function renderCertificateCanvas() {
   ctx.font = "15px sans-serif";
   ctx.fillText("This is proudly presented to", canvas.width / 2, 225);
 
-  // Recipient Name
-  ctx.fillStyle = "#800000"; // GGSIPU Maroon
+  ctx.fillStyle = "#800000";
   ctx.font = "bold 36px 'Plus Jakarta Sans', sans-serif";
   ctx.fillText(name.toUpperCase(), canvas.width / 2, 275);
 
@@ -1138,14 +1312,12 @@ function renderCertificateCanvas() {
   ctx.font = "bold 20px 'Plus Jakarta Sans', sans-serif";
   ctx.fillText(`"${event}"`, canvas.width / 2, 390);
 
-  // Bottom Details
   ctx.textAlign = "left";
   ctx.fillStyle = "#64748b";
   ctx.font = "12px 'Space Grotesk', sans-serif";
   ctx.fillText("Cert ID: GGSIPU-2026-DSW-1001", 60, 520);
   ctx.fillText("SHA-256 Hash: 6c2e35327ecad8b417ef2f205c0888df...", 60, 540);
 
-  // Signatory Line
   ctx.textAlign = "right";
   ctx.fillStyle = "#0f172a";
   ctx.font = "bold 14px sans-serif";
@@ -1154,7 +1326,6 @@ function renderCertificateCanvas() {
   ctx.fillStyle = "#64748b";
   ctx.fillText("Competent Authority Sign-off", canvas.width - 60, 540);
 
-  // Draw QR Placeholder
   ctx.fillStyle = "#f1f5f9";
   ctx.fillRect(canvas.width / 2 - 35, 470, 70, 70);
   ctx.strokeStyle = "#94a3b8";
@@ -1169,8 +1340,9 @@ function renderCertificateCanvas() {
 // AUDIT LOG RENDER
 function renderAuditLogs() {
   const tbody = document.getElementById("audit-log-tbody");
-  const searchQuery = (document.getElementById("audit-search-input").value || "").toLowerCase().trim();
+  if (!tbody) return;
 
+  const searchQuery = (document.getElementById("audit-search-input") ? document.getElementById("audit-search-input").value : "").toLowerCase().trim();
   tbody.innerHTML = "";
 
   const filteredLogs = mockAuditLogs.filter(l => {
@@ -1243,7 +1415,6 @@ async function executeRevocation() {
     return;
   }
 
-  // State Machine Guard: Cannot revoke already revoked cert
   if (target.Status === "Revoked") {
     showToast(`Certificate ${currentRevocationCertId} is already REVOKED.`, "danger");
     closeRevocationModal();
@@ -1252,6 +1423,7 @@ async function executeRevocation() {
 
   const prevStatus = target.Status;
   target.Status = "Revoked";
+  const revoker = currentStaffSession ? currentStaffSession.email : "Dean DSW";
 
   if (GAS_API_URL) {
     try {
@@ -1263,7 +1435,7 @@ async function executeRevocation() {
           apiKey: ADMIN_API_KEY,
           certId: currentRevocationCertId,
           reason: reason,
-          revokedBy: "Prof. Dean Students' Welfare (Dean DSW)"
+          revokedBy: revoker
         })
       });
     } catch (err) {
@@ -1275,7 +1447,7 @@ async function executeRevocation() {
     Timestamp: new Date().toLocaleString(),
     EventType: "REVOCATION",
     Details: `Certificate ${currentRevocationCertId} transitioned from [${prevStatus}] -> [Revoked]. Reason: ${reason}`,
-    PerformedBy: "Prof. Dean Students' Welfare"
+    PerformedBy: revoker
   });
 
   renderMasterLedger();
@@ -1286,6 +1458,139 @@ async function executeRevocation() {
   showToast(`Certificate ${currentRevocationCertId} has been REVOKED.`, "danger");
 }
 
+// STAFF USERS MANAGEMENT (Admin only)
+function setupStaffUserManagement() {
+  const openBtn = document.getElementById("open-add-user-modal-btn");
+  const modal = document.getElementById("user-modal");
+  const closeBtn = document.getElementById("close-user-modal-btn");
+  const cancelBtn = document.getElementById("cancel-user-modal-btn");
+  const saveBtn = document.getElementById("save-user-btn");
+
+  if (!openBtn) return;
+
+  openBtn.addEventListener("click", () => {
+    document.getElementById("user-email-input").value = "";
+    document.getElementById("user-role-select").value = "Approver";
+    modal.style.display = "flex";
+  });
+
+  const closeModal = () => { modal.style.display = "none"; };
+  if (closeBtn) closeBtn.addEventListener("click", closeModal);
+  if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+
+  if (saveBtn) {
+    saveBtn.addEventListener("click", () => {
+      const email = document.getElementById("user-email-input").value.trim().toLowerCase();
+      const role = document.getElementById("user-role-select").value;
+
+      if (!email) {
+        showToast("Please enter an email address", "danger");
+        return;
+      }
+
+      const existingIdx = mockUsers.findIndex(u => u.Email.toLowerCase() === email);
+      const today = new Date().toISOString().split("T")[0];
+
+      if (existingIdx !== -1) {
+        const oldRole = mockUsers[existingIdx].Role;
+        mockUsers[existingIdx].Role = role;
+        mockAuditLogs.unshift({
+          Timestamp: new Date().toLocaleString(),
+          EventType: "USER_ROLE_CHANGED",
+          Details: `Updated role for ${email} from [${oldRole}] -> [${role}]`,
+          PerformedBy: currentStaffSession ? currentStaffSession.email : "Admin"
+        });
+        showToast(`Updated role for ${email} to ${role}`, "success");
+      } else {
+        mockUsers.push({ Email: email, Role: role, AddedOn: today });
+        mockAuditLogs.unshift({
+          Timestamp: new Date().toLocaleString(),
+          EventType: "USER_ADDED",
+          Details: `Added staff user ${email} with role [${role}]`,
+          PerformedBy: currentStaffSession ? currentStaffSession.email : "Admin"
+        });
+        showToast(`Added ${email} as ${role}`, "success");
+      }
+
+      renderStaffUsers();
+      renderAuditLogs();
+      closeModal();
+    });
+  }
+}
+
+function renderStaffUsers() {
+  const tbody = document.getElementById("users-table-body");
+  const badge = document.getElementById("users-count-badge");
+  if (!tbody) return;
+
+  badge.textContent = `${mockUsers.length} Staff Members`;
+  tbody.innerHTML = "";
+
+  const rolePermsDesc = {
+    "Admin": "Full administrative control, user management, API config",
+    "Approver": "Dashboard, certificate approvals & revocations, audit logs",
+    "Issuer": "Dashboard, bulk CSV issuance & certificate designer",
+    "Viewer": "Read-only access to dashboard & audit logs"
+  };
+
+  mockUsers.forEach(u => {
+    const tr = document.createElement("tr");
+    const safeEmail = escapeHtml(u.Email);
+    const safeRole = escapeHtml(u.Role);
+    const safeAdded = escapeHtml(u.AddedOn);
+    const perms = rolePermsDesc[u.Role] || "Standard staff access";
+
+    tr.innerHTML = `
+      <td><strong>${safeEmail}</strong></td>
+      <td><span class="role-pill ${safeRole.toLowerCase()}">${safeRole}</span></td>
+      <td style="font-size:0.8rem; color:var(--text-muted);">${perms}</td>
+      <td>${safeAdded}</td>
+      <td>
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-secondary btn-sm edit-user-btn" data-email="${safeEmail}" data-role="${safeRole}" title="Change Role">
+            <i data-feather="edit-2"></i> Edit
+          </button>
+          <button class="btn btn-danger btn-sm remove-user-btn" data-email="${safeEmail}" title="Remove Staff Member">
+            <i data-feather="trash-2"></i> Remove
+          </button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll(".edit-user-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const email = btn.getAttribute("data-email");
+      const role = btn.getAttribute("data-role");
+      document.getElementById("user-email-input").value = email;
+      document.getElementById("user-role-select").value = role;
+      document.getElementById("user-modal").style.display = "flex";
+    });
+  });
+
+  tbody.querySelectorAll(".remove-user-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const email = btn.getAttribute("data-email");
+      if (confirm(`Are you sure you want to remove staff access for ${email}?`)) {
+        mockUsers = mockUsers.filter(u => u.Email.toLowerCase() !== email.toLowerCase());
+        mockAuditLogs.unshift({
+          Timestamp: new Date().toLocaleString(),
+          EventType: "USER_REMOVED",
+          Details: `Removed staff user ${email}`,
+          PerformedBy: currentStaffSession ? currentStaffSession.email : "Admin"
+        });
+        renderStaffUsers();
+        renderAuditLogs();
+        showToast(`Removed staff user ${email}`, "info");
+      }
+    });
+  });
+
+  feather.replace();
+}
+
 // API CONFIGURATION MODAL
 function setupApiConfigModal() {
   const modal = document.getElementById("api-config-modal");
@@ -1294,6 +1599,8 @@ function setupApiConfigModal() {
   const cancelBtn = document.getElementById("cancel-api-config-btn");
   const saveBtn = document.getElementById("save-api-config-btn");
 
+  if (!openBtn) return;
+
   openBtn.addEventListener("click", () => {
     document.getElementById("gas-url-input").value = GAS_API_URL;
     document.getElementById("api-key-input").value = ADMIN_API_KEY;
@@ -1301,31 +1608,34 @@ function setupApiConfigModal() {
   });
 
   const closeModal = () => { modal.style.display = "none"; };
-  closeBtn.addEventListener("click", closeModal);
-  cancelBtn.addEventListener("click", closeModal);
+  if (closeBtn) closeBtn.addEventListener("click", closeModal);
+  if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
 
-  saveBtn.addEventListener("click", async () => {
-    GAS_API_URL = document.getElementById("gas-url-input").value.trim();
-    ADMIN_API_KEY = document.getElementById("api-key-input").value.trim();
+  if (saveBtn) {
+    saveBtn.addEventListener("click", async () => {
+      GAS_API_URL = document.getElementById("gas-url-input").value.trim();
+      ADMIN_API_KEY = document.getElementById("api-key-input").value.trim();
 
-    localStorage.setItem("GGSIPU_GAS_API_URL", GAS_API_URL);
-    localStorage.setItem("GGSIPU_ADMIN_API_KEY", ADMIN_API_KEY);
+      localStorage.setItem("GGSIPU_GAS_API_URL", GAS_API_URL);
+      localStorage.setItem("GGSIPU_ADMIN_API_KEY", ADMIN_API_KEY);
 
-    updateConnectionStatusUI();
-    closeModal();
+      updateConnectionStatusUI();
+      closeModal();
 
-    if (GAS_API_URL) {
-      showToast("Attempting connection to Google Apps Script Web App...");
-      await fetchRemoteLedger();
-    } else {
-      showToast("Running in Local Simulation Mode", "info");
-    }
-  });
+      if (GAS_API_URL) {
+        showToast("Attempting connection to Google Apps Script Web App...");
+        await fetchRemoteLedger();
+      } else {
+        showToast("Running in Local Engine Mode", "info");
+      }
+    });
+  }
 }
 
 function updateConnectionStatusUI() {
   const statusText = document.getElementById("status-mode-text");
   const statusDot = document.getElementById("status-dot");
+  if (!statusText || !statusDot) return;
 
   if (GAS_API_URL) {
     statusText.textContent = "Google Cloud Active";
@@ -1348,7 +1658,7 @@ async function fetchRemoteLedger() {
       renderApprovalQueue();
       showToast(`Loaded ${data.certificates.length} certificates from Google Sheets!`, "success");
     } else if (data.status === "unauthorized") {
-      showToast("Access Denied: Please configure valid Admin API Key in API Config", "danger");
+      showToast("Access Denied: Please configure valid Admin API Key in Config", "danger");
     }
   } catch (err) {
     showToast("Failed to fetch remote ledger from Google Apps Script", "danger");
@@ -1358,6 +1668,8 @@ async function fetchRemoteLedger() {
 // TOAST NOTIFIER SYSTEM
 function showToast(message, type = "info") {
   const container = document.getElementById("toast-container");
+  if (!container) return;
+
   const toast = document.createElement("div");
   toast.className = `toast ${type}`;
 
