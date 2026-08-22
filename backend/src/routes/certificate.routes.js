@@ -5,11 +5,14 @@ const { handleUpload } = require('../middleware/upload.middleware');
 const { parseExcelBuffer } = require('../services/excelParser.service');
 const { generateCertificatePdf } = require('../services/pdfGenerator.service');
 const { uploadPdfToDrive } = require('../services/drive.service');
+const { sendCertificateEmail, delay } = require('../services/email.service');
 const {
   insertCertificatesBatch,
   getAllCertificates,
   getCertificatesForPdfGeneration,
   updateCertificatePdfUrl,
+  getCertificatesForEmailing,
+  markCertificateEmailed,
 } = require('../services/certificate.service');
 
 /**
@@ -290,6 +293,86 @@ router.get('/', authenticateUser, async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to retrieve certificates from database',
+    });
+  }
+});
+
+/**
+ * POST /api/certificates/send-emails
+ *
+ * Protected: Requires ADMIN role.
+ * Body: { certIds?: string[] } (optional; omit = all eligible approved certificates)
+ * Action: Loops over approved certificates with valid PDF URLs, sends branded HTML email,
+ *         marks emailed in NeonDB, and delays 500ms between sends to avoid rate limits.
+ * Returns: { success: true, totalAttempted, sentCount, failed: [{cert_id, email, reason}] }
+ */
+router.post('/send-emails', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { certIds } = req.body || {};
+
+    // 1. Fetch eligible certificates from NeonDB
+    const certificates = await getCertificatesForEmailing({ certIds });
+
+    if (certificates.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No eligible approved certificates found for email sending.',
+        totalAttempted: 0,
+        sentCount: 0,
+        failed: [],
+      });
+    }
+
+    const failed = [];
+    let sentCount = 0;
+
+    // 2. Iterate through certificates with isolated try/catch per cert
+    for (let i = 0; i < certificates.length; i++) {
+      const cert = certificates[i];
+      const certId = cert.cert_id;
+      const recipientEmail = cert.email;
+
+      try {
+        await sendCertificateEmail({
+          name: cert.name,
+          email: recipientEmail,
+          cert_id: certId,
+          pdf_url: cert.pdf_url,
+        });
+
+        // Mark certificate as emailed in NeonDB
+        await markCertificateEmailed(certId);
+        sentCount++;
+      } catch (err) {
+        console.error(`[EMAIL ROUTE] Failed to send email for Certificate ${certId} (${recipientEmail}):`, err.message || err);
+        failed.push({
+          cert_id: certId,
+          email: recipientEmail,
+          reason: err.message || 'Failed to send certificate email',
+        });
+      }
+
+      // 500ms delay between sends to respect Gmail rate limits
+      if (i < certificates.length - 1) {
+        await delay(500);
+      }
+    }
+
+    const totalAttempted = certificates.length;
+
+    return res.status(200).json({
+      success: true,
+      message: `Processed email batch: ${sentCount} sent successfully, ${failed.length} failed.`,
+      totalAttempted,
+      sentCount,
+      failed,
+    });
+  } catch (error) {
+    console.error('[EMAIL ROUTE] Unhandled error during certificate email batch:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while processing certificate emails',
+      error: error.message,
     });
   }
 });

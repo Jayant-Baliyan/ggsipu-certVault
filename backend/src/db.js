@@ -30,16 +30,16 @@ const pool = new Pool({
   lookup: (hostname, options, callback) => {
     const cb = typeof options === 'function' ? options : callback;
 
-    resolver.resolve4(hostname, (resErr, addresses) => {
-      if (!resErr && addresses && addresses.length > 0) {
-        return cb(null, addresses[0], 4);
+    dns.lookup(hostname, { family: 4 }, (err, address, family) => {
+      if (!err && address) {
+        return cb(null, address, family || 4);
       }
 
-      dns.lookup(hostname, { family: 4 }, (err, address, family) => {
-        if (!err && address) {
-          return cb(null, address, family || 4);
+      dns.resolve(hostname, (resErr, addresses) => {
+        if (!resErr && addresses && addresses.length > 0) {
+          return cb(null, addresses[0], 4);
         }
-        cb(resErr || err);
+        cb(err || resErr);
       });
     });
   },
@@ -85,21 +85,25 @@ async function initDb() {
       status VARCHAR(50) NOT NULL DEFAULT 'pending',
       pdf_url VARCHAR(500),
       pdf_file_id VARCHAR(255),
+      emailed BOOLEAN DEFAULT FALSE,
+      emailed_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_certificates_cert_id ON certificates (cert_id);
     CREATE INDEX IF NOT EXISTS idx_certificates_status ON certificates (status);
 
-    -- Ensure pdf_url and pdf_file_id exist in case table was created previously
+    -- Ensure pdf_url, pdf_file_id, emailed, and emailed_at exist in case table was created previously
     ALTER TABLE certificates ADD COLUMN IF NOT EXISTS pdf_url VARCHAR(500);
     ALTER TABLE certificates ADD COLUMN IF NOT EXISTS pdf_file_id VARCHAR(255);
+    ALTER TABLE certificates ADD COLUMN IF NOT EXISTS emailed BOOLEAN DEFAULT FALSE;
+    ALTER TABLE certificates ADD COLUMN IF NOT EXISTS emailed_at TIMESTAMPTZ;
   `;
 
   try {
     await pool.query(createUsersTableQuery);
     console.log('[DATABASE] NeonDB users table verified/initialized.');
     await pool.query(createCertificatesTableQuery);
-    console.log('[DATABASE] NeonDB certificates table verified/initialized with PDF columns.');
+    console.log('[DATABASE] NeonDB certificates table verified/initialized with PDF and email columns.');
   } catch (err) {
     console.error('[DATABASE] Error during database initialization:', err.message || err);
   }

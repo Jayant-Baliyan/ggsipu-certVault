@@ -202,6 +202,57 @@ async function approveCertificatesBatch(certIds) {
   return res.rows;
 }
 
+/**
+ * Fetches approved certificates with valid PDF URLs ready for emailing.
+ * Filtered by certIds if provided, otherwise all where emailed is not true.
+ *
+ * @param {Object} [options]
+ * @param {string[]} [options.certIds]
+ * @returns {Promise<Array<Object>>}
+ */
+async function getCertificatesForEmailing(options = {}) {
+  const { certIds } = options;
+
+  let query = `
+    SELECT id, cert_id, roll_number, name, email, course, event_name, cert_type, issue_date, hash, status, pdf_url, pdf_file_id, emailed, emailed_at
+    FROM certificates
+    WHERE LOWER(status) = 'approved'
+      AND pdf_url IS NOT NULL
+      AND pdf_url != ''
+  `;
+  const params = [];
+
+  if (Array.isArray(certIds) && certIds.length > 0) {
+    const placeholders = certIds.map((_, idx) => `$${idx + 1}`).join(', ');
+    query += ` AND UPPER(TRIM(cert_id)) IN (${placeholders})`;
+    params.push(...certIds.map(id => String(id).trim().toUpperCase()));
+  } else {
+    query += ` AND (emailed IS NULL OR emailed = FALSE)`;
+  }
+
+  query += ` ORDER BY id ASC;`;
+
+  const res = await db.query(query, params);
+  return res.rows;
+}
+
+/**
+ * Marks a certificate record as emailed in NeonDB with current timestamp.
+ *
+ * @param {string} certId
+ * @returns {Promise<Object>}
+ */
+async function markCertificateEmailed(certId) {
+  const query = `
+    UPDATE certificates
+    SET emailed = TRUE, emailed_at = NOW()
+    WHERE UPPER(TRIM(cert_id)) = UPPER(TRIM($1))
+    RETURNING id, cert_id, name, email, emailed, emailed_at;
+  `;
+  const res = await db.query(query, [certId]);
+  return res.rows[0];
+}
+
 module.exports = {
   insertCertificatesBatch,
   getAllCertificates,
@@ -209,4 +260,6 @@ module.exports = {
   updateCertificatePdfUrl,
   updateCertificateStatus,
   approveCertificatesBatch,
+  getCertificatesForEmailing,
+  markCertificateEmailed,
 };
