@@ -1216,10 +1216,39 @@ async function processCsvBatchIssuance() {
     console.warn("Could not reach Express NeonDB backend for batch generation:", err);
   }
 
-  // 2. Refresh ledger from NeonDB
+  // 2. Populate newly parsed records directly into mockLedger with Pending status
+  parsedCsvRecords.forEach((rec, idx) => {
+    const certId = (backendInsertedIds && backendInsertedIds[idx]) ? backendInsertedIds[idx] : rec.CertID;
+    const newRecord = {
+      CertID: certId,
+      RollNumber: rec.RollNumber || "00000000000",
+      StudentName: rec.StudentName || "Student Recipient",
+      Email: rec.Email || "",
+      School: rec.School || rec.Course || "USICT",
+      Course: rec.Course || "B.Tech",
+      EventName: rec.EventName || "University Event",
+      IssueDate: rec.IssueDate || new Date().toISOString().split("T")[0],
+      Status: "Pending",
+      SHA256Hash: rec.SHA256Hash,
+      MerkleRoot: batchMerkleRoot,
+      DrivePdfUrl: `https://drive.google.com/file/d/mock_${certId}/view`,
+      QrVerificationUrl: `https://ggsipu.ac.in/verify?certId=${encodeURIComponent(certId)}`,
+      ApprovedBy: "",
+      ApprovalDate: ""
+    };
+    mockLedger = mockLedger.filter(c => c.CertID !== certId);
+    mockLedger.unshift(newRecord);
+  });
+
+  // 3. Refresh live ledger from NeonDB
   await fetchRemoteLedger();
 
-  showToast(`Successfully processed all ${parsedCsvRecords.length} certificate(s)!`, "success");
+  renderMasterLedger();
+  renderMetrics();
+  renderApprovalQueue();
+  renderAuditLogs();
+
+  showToast(`Successfully added ${parsedCsvRecords.length} certificate(s) to Approval Queue!`, "success");
   parsedCsvRecords = [];
   currentUploadedBatchFile = null;
   document.getElementById("csv-preview-card").style.display = "none";
@@ -1231,7 +1260,8 @@ async function processCsvBatchIssuance() {
     if (window.feather) feather.replace();
   }
 
-  switchToTab("dashboard-tab");
+  // Switch to Approval Queue tab immediately
+  switchToTab("approval-tab");
 }
 
 // APPROVAL QUEUE
