@@ -21,6 +21,7 @@ function getEmailTransporter() {
     host: 'smtp.gmail.com',
     port: 465,
     secure: true, // Use Direct SSL on port 465
+    family: 4,   // FORCE IPv4 to prevent ENETUNREACH IPv6 routing errors on Render
     auth: {
       user: user.trim(),
       pass: pass.trim(),
