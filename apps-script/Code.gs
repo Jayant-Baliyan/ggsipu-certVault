@@ -194,6 +194,8 @@ function doPost(e) {
       result = approveCertificate(data.certId, data.approverName, data.approverRole, data.signatureDataUrl);
     } else if (action === "revokeCertificate") {
       result = revokeCertificate(data.certId, data.reason, data.revokedBy);
+    } else if (action === "uploadCertificatePdf") {
+      result = uploadCertificatePdfToDrive(data.certId, data.pdfBase64, data.folderId);
     } else {
       result = { status: "error", message: "Unknown post action: " + action };
     }
@@ -203,6 +205,32 @@ function doPost(e) {
 
   return ContentService.createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Uploads a base64 encoded PDF directly into Google Drive under user's personal quota
+ */
+function uploadCertificatePdfToDrive(certId, pdfBase64, folderId) {
+  try {
+    var decoded = Utilities.base64Decode(pdfBase64);
+    var blob = Utilities.newBlob(decoded, "application/pdf", certId + ".pdf");
+    var folder;
+    if (folderId) {
+      folder = DriveApp.getFolderById(folderId);
+    } else {
+      var folders = DriveApp.getFoldersByName(CONFIG.DRIVE_FOLDER_NAME);
+      folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(CONFIG.DRIVE_FOLDER_NAME);
+    }
+    var file = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return {
+      status: "success",
+      fileId: file.getId(),
+      fileUrl: file.getUrl() || ("https://drive.google.com/file/d/" + file.getId() + "/view?usp=sharing")
+    };
+  } catch (err) {
+    return { status: "error", message: err.toString() };
+  }
 }
 
 // =========================================================================

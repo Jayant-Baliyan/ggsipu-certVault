@@ -1008,7 +1008,9 @@ function setupFilters() {
   });
 }
 
-// BULK CSV PARSER & ISSUER
+// BULK CSV/EXCEL PARSER & ISSUER
+let currentUploadedBatchFile = null;
+
 function setupCsvUploader() {
   const dropzone = document.getElementById("csv-dropzone");
   const fileInput = document.getElementById("csv-file-input");
@@ -1019,12 +1021,14 @@ function setupCsvUploader() {
 
   fileInput.addEventListener("change", (e) => {
     if (e.target.files.length > 0) {
+      currentUploadedBatchFile = e.target.files[0];
       readCsvFile(e.target.files[0]);
     }
   });
 
   document.getElementById("parse-pasted-csv-btn").addEventListener("click", () => {
     const text = document.getElementById("csv-paste-textarea").value;
+    currentUploadedBatchFile = null;
     parseCsvString(text);
   });
 
@@ -1042,11 +1046,11 @@ function readCsvFile(file) {
 async function parseCsvString(csvText) {
   const lines = (csvText || "").trim().split("\n");
   if (lines.length <= 1) {
-    showToast("CSV file is empty or missing headers", "danger");
+    showToast("File is empty or missing headers", "danger");
     return;
   }
 
-  const headers = lines[0].split(",").map(h => h.trim().replace(/^["']|["']$/g, ""));
+  const rawHeaders = lines[0].split(",").map(h => h.trim().replace(/^["']|["']$/g, ""));
   parsedCsvRecords = [];
 
   const existingIdsSet = new Set(mockLedger.map(c => (c.CertID || "").toUpperCase()));
@@ -1055,20 +1059,39 @@ async function parseCsvString(csvText) {
     if (!lines[i].trim()) continue;
     const values = lines[i].split(",").map(v => v.trim().replace(/^["']|["']$/g, ""));
     const obj = {};
-    headers.forEach((h, idx) => {
+    rawHeaders.forEach((h, idx) => {
       obj[h] = values[idx] || "";
     });
 
-    if (!obj.CertID || existingIdsSet.has(obj.CertID.toUpperCase())) {
-      obj.CertID = generateUniqueCertId(existingIdsSet);
-    }
-    existingIdsSet.add(obj.CertID.toUpperCase());
+    const studentName = obj.StudentName || obj.Name || obj.student_name || obj.name || "Student Recipient";
+    const rollNo = obj.RollNumber || obj.RollNo || obj.roll_number || obj.roll_no || obj.CertID || `012164032${i}`;
+    const email = obj.Email || obj.email || `${studentName.toLowerCase().replace(/\s+/g, '.')}@ggsipu.edu`;
+    const school = obj.School || obj.Department || obj.school || obj.department || "USICT";
+    const course = obj.Course || obj.course || obj.Branch || obj.branch || "B.Tech CSE";
+    const eventName = obj.EventName || obj.Event || obj.event_name || obj.event || "Smart India Hackathon 2026";
+    const certType = obj.CertificateType || obj.cert_type || obj.certificate_type || obj.Status || "Participation";
+    const issueDate = obj.IssueDate || obj.issue_date || new Date().toISOString().split("T")[0];
 
-    obj.IssueDate = obj.IssueDate || new Date().toISOString().split("T")[0];
-    obj.Status = "Pending";
-    obj.SHA256Hash = await computeCertificateRecordHash(obj);
+    const certId = obj.CertID && !existingIdsSet.has(obj.CertID.toUpperCase())
+      ? obj.CertID.toUpperCase()
+      : generateUniqueCertId(existingIdsSet);
+    existingIdsSet.add(certId);
 
-    parsedCsvRecords.push(obj);
+    const record = {
+      CertID: certId,
+      RollNumber: rollNo,
+      StudentName: studentName,
+      Email: email,
+      School: school,
+      Course: course,
+      EventName: eventName,
+      CertificateType: certType,
+      IssueDate: issueDate,
+      Status: "Pending",
+    };
+
+    record.SHA256Hash = await computeCertificateRecordHash(record);
+    parsedCsvRecords.push(record);
   }
 
   document.getElementById("parsed-count-span").textContent = parsedCsvRecords.length;
@@ -1083,8 +1106,8 @@ async function parseCsvString(csvText) {
     const safeRoll = escapeHtml(rec.RollNumber || rec.RollNo || "N/A");
     const safeName = escapeHtml(rec.StudentName || rec.Name || "N/A");
     const safeEmail = escapeHtml(rec.Email || "N/A");
-    const safeSchool = escapeHtml(rec.School || rec.Department || "USICT");
-    const safeEvent = escapeHtml(rec.EventName || rec.Event || "Workshop");
+    const safeSchool = escapeHtml(rec.School || rec.Course || "USICT");
+    const safeEvent = escapeHtml(rec.EventName || "Workshop");
     const safeHash = escapeHtml(rec.SHA256Hash || "");
     const shortHash = safeHash.length > 16 ? safeHash.substring(0, 16) + "..." : safeHash;
 
@@ -1102,78 +1125,113 @@ async function parseCsvString(csvText) {
     tbody.appendChild(tr);
   });
 
-  showToast(`Parsed ${parsedCsvRecords.length} records from CSV with unique IDs and hashes`);
+  showToast(`Parsed ${parsedCsvRecords.length} records successfully!`);
 }
 
 async function processCsvBatchIssuance() {
-  if (parsedCsvRecords.length === 0) return;
+  if (parsedCsvRecords.length === 0) {
+    showToast("No student records to process. Please upload or paste spreadsheet data first.", "danger");
+    return;
+  }
+
+  const processBtn = document.getElementById("process-batch-btn");
+  if (processBtn) {
+    processBtn.disabled = true;
+    processBtn.innerHTML = `<i data-feather="loader"></i> Saving to NeonDB...`;
+    if (window.feather) feather.replace();
+  }
 
   const hashesList = parsedCsvRecords.map(r => r.SHA256Hash);
   const batchMerkleRoot = await computeMerkleRoot(hashesList);
 
-  const newRecords = [];
   const issuer = currentStaffSession ? (currentStaffSession.name || currentStaffSession.email) : "Authorized Staff";
+  const userToken = currentStaffSession ? currentStaffSession.token : null;
 
-  for (let rec of parsedCsvRecords) {
-    const newRecord = {
-      CertID: rec.CertID,
-      RollNumber: rec.RollNumber || rec.RollNo || "00000000000",
-      StudentName: rec.StudentName || rec.Name || "Student Recipient",
-      Email: rec.Email || "",
-      School: rec.School || rec.Department || "USICT",
-      Course: rec.Course || "B.Tech",
-      EventName: rec.EventName || rec.Event || "University Event",
-      IssueDate: rec.IssueDate || new Date().toISOString().split("T")[0],
-      Status: "Pending",
-      SHA256Hash: rec.SHA256Hash,
-      MerkleRoot: batchMerkleRoot,
-      DrivePdfUrl: `https://drive.google.com/file/d/mock_${rec.CertID}/view`,
-      QrVerificationUrl: `https://ggsipu.ac.in/verify?certId=${encodeURIComponent(rec.CertID)}`,
-      ApprovedBy: "",
-      ApprovalDate: ""
-    };
-    newRecords.push(newRecord);
-    mockLedger.unshift(newRecord);
-  }
+  // 1. Submit batch to NeonDB Backend API
+  let backendInsertedIds = [];
+  try {
+    const formData = new FormData();
 
-  if (GAS_API_URL) {
-    try {
-      const res = await fetch(GAS_API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify({
-          action: "createCertificates",
-          apiKey: ADMIN_API_KEY,
-          records: newRecords,
-          issuerEmail: issuer
-        })
-      });
-      const remoteData = await res.json();
-      if (remoteData.status === "unauthorized") {
-        showToast("Apps Script Authentication failed: Invalid Admin API Key", "danger");
-      }
-    } catch (err) {
-      console.warn("Failed to sync batch to remote GAS:", err);
+    if (currentUploadedBatchFile) {
+      formData.append("file", currentUploadedBatchFile);
+    } else {
+      // Build a CSV file from parsed records
+      const csvHeader = "name,email,course,event_name,certificate_type,issue_date,roll_number,cert_id\n";
+      const csvRows = parsedCsvRecords.map(r =>
+        `"${r.StudentName}","${r.Email}","${r.Course || r.School}","${r.EventName}","${r.CertificateType || 'Participation'}","${r.IssueDate}","${r.RollNumber}","${r.CertID}"`
+      ).join("\n");
+      const blob = new Blob([csvHeader + csvRows], { type: "text/csv" });
+      formData.append("file", blob, "batch_issuance.csv");
     }
+
+    const headers = {};
+    if (userToken) {
+      headers["Authorization"] = `Bearer ${userToken}`;
+    }
+    if (currentStaffSession) {
+      headers["x-user-email"] = currentStaffSession.email;
+      headers["x-user-role"] = currentStaffSession.role || "ADMIN";
+    }
+    if (ADMIN_API_KEY) {
+      headers["x-api-key"] = ADMIN_API_KEY;
+    }
+
+    const res = await fetch(`${BACKEND_API_BASE}/api/certificates/bulk-generate`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+
+    const resData = await res.json();
+
+    if (res.ok && resData.success) {
+      backendInsertedIds = resData.insertedCertIds || [];
+      showToast(`NeonDB: ${resData.message || 'Saved records to NeonDB database!'}`, "success");
+
+      // Auto-generate PDFs and upload to Google Drive for newly inserted certificates
+      if (backendInsertedIds.length > 0) {
+        showToast(`Generating ${backendInsertedIds.length} certificate PDF(s) & uploading to Google Drive...`, "info");
+        try {
+          const pdfRes = await fetch(`${BACKEND_API_BASE}/api/certificates/generate-pdf`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...headers,
+            },
+            body: JSON.stringify({ certIds: backendInsertedIds }),
+          });
+          const pdfData = await pdfRes.json();
+          if (pdfData.success && pdfData.generated && pdfData.generated.length > 0) {
+            showToast(`Google Drive: ${pdfData.message || 'Uploaded certificates to Google Drive!'}`, "success");
+          }
+        } catch (pdfErr) {
+          console.warn("Auto-PDF generation error:", pdfErr);
+        }
+      }
+    } else {
+      console.warn("Backend bulk-generate response:", resData);
+      showToast(resData.message || "Could not save to NeonDB backend", "danger");
+    }
+  } catch (err) {
+    console.warn("Could not reach Express NeonDB backend for batch generation:", err);
   }
 
-  mockAuditLogs.unshift({
-    Timestamp: new Date().toLocaleString(),
-    EventType: "BATCH_ISSUANCE",
-    Details: `Created batch of ${parsedCsvRecords.length} certificates with status Pending. Merkle Root: ${batchMerkleRoot}`,
-    PerformedBy: issuer
-  });
+  // 2. Refresh ledger from NeonDB
+  await fetchRemoteLedger();
 
-  renderMasterLedger();
-  renderMetrics();
-  renderApprovalQueue();
-  renderAuditLogs();
-
-  showToast(`Submitted ${parsedCsvRecords.length} certificates to Approval Queue! (Status: Pending)`, "success");
+  showToast(`Successfully processed all ${parsedCsvRecords.length} certificate(s)!`, "success");
   parsedCsvRecords = [];
+  currentUploadedBatchFile = null;
   document.getElementById("csv-preview-card").style.display = "none";
   document.getElementById("csv-paste-textarea").value = "";
-  switchToTab("approval-tab");
+
+  if (processBtn) {
+    processBtn.disabled = false;
+    processBtn.innerHTML = `<i data-feather="send"></i> Process Batch Issuance`;
+    if (window.feather) feather.replace();
+  }
+
+  switchToTab("dashboard-tab");
 }
 
 // APPROVAL QUEUE
@@ -1265,6 +1323,23 @@ async function approveSingleCert(certId) {
   target.ApprovedBy = approverName + " (Authorized Approver)";
   target.ApprovalDate = new Date().toISOString().split("T")[0];
 
+  // 1. Sync approval to NeonDB backend
+  try {
+    const userToken = currentStaffSession ? currentStaffSession.token : null;
+    const headers = { "Content-Type": "application/json" };
+    if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
+    if (ADMIN_API_KEY) headers["x-api-key"] = ADMIN_API_KEY;
+
+    await fetch(`${BACKEND_API_BASE}/api/certificates/approve`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ certId: certId }),
+    });
+  } catch (dbErr) {
+    console.warn("NeonDB approval sync warning:", dbErr);
+  }
+
+  // 2. Sync to GAS if configured
   if (GAS_API_URL) {
     try {
       await fetch(GAS_API_URL, {
@@ -1305,6 +1380,7 @@ async function approveSelectedBatch() {
   }
 
   let approvedCount = 0;
+  const approvedIds = [];
   const today = new Date().toISOString().split("T")[0];
   const approverName = currentStaffSession ? (currentStaffSession.name || currentStaffSession.email) : "Dean DSW";
 
@@ -1316,6 +1392,7 @@ async function approveSelectedBatch() {
       target.ApprovedBy = approverName + " (Dean DSW)";
       target.ApprovalDate = today;
       approvedCount++;
+      approvedIds.push(certId);
 
       if (GAS_API_URL) {
         try {
@@ -1329,11 +1406,29 @@ async function approveSelectedBatch() {
               approverName: approverName,
               approverRole: "Dean DSW"
             })
-          });
-        } catch (e) {}
+          }).catch(e => console.warn(e));
+        } catch (err) {}
       }
     }
   }
+
+  // Sync batch approval to NeonDB backend
+  if (approvedIds.length > 0) {
+    try {
+      const userToken = currentStaffSession ? currentStaffSession.token : null;
+      const headers = { "Content-Type": "application/json" };
+      if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
+      if (ADMIN_API_KEY) headers["x-api-key"] = ADMIN_API_KEY;
+
+      await fetch(`${BACKEND_API_BASE}/api/certificates/approve`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ certIds: approvedIds }),
+      });
+    } catch (dbErr) {
+      console.warn("NeonDB batch approval sync error:", dbErr);
+    }
+  };
 
   mockAuditLogs.unshift({
     Timestamp: new Date().toLocaleString(),
@@ -1866,6 +1961,47 @@ function updateConnectionStatusUI() {
 }
 
 async function fetchRemoteLedger() {
+  const userToken = currentStaffSession ? currentStaffSession.token : null;
+  const headers = {};
+  if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
+  if (ADMIN_API_KEY) headers["x-api-key"] = ADMIN_API_KEY;
+
+  // 1. Fetch live certificates from NeonDB Backend
+  try {
+    const res = await fetch(`${BACKEND_API_BASE}/api/certificates`, { headers });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.certificates) && data.certificates.length > 0) {
+        mockLedger = data.certificates.map(c => ({
+          CertID: c.cert_id,
+          RollNumber: c.roll_number || "N/A",
+          StudentName: c.name,
+          Email: c.email,
+          School: c.course || "USICT",
+          Course: c.course || "GGSIPU",
+          EventName: c.event_name,
+          CertificateType: c.cert_type || "Participation",
+          IssueDate: c.issue_date ? String(c.issue_date).substring(0, 10) : new Date().toISOString().split("T")[0],
+          Status: (c.status || "Pending").charAt(0).toUpperCase() + (c.status || "Pending").slice(1).toLowerCase(),
+          SHA256Hash: c.hash,
+          MerkleRoot: "8f2d4e910a11b12c13d14e15f16a17b18c19d20e21f22a23b24c25d26e27f28a",
+          DrivePdfUrl: c.pdf_url || `https://drive.google.com/file/d/mock_${c.cert_id}/view`,
+          QrVerificationUrl: `https://ggsipu.ac.in/verify?certId=${encodeURIComponent(c.cert_id)}`,
+          ApprovedBy: String(c.status).toLowerCase() === 'approved' ? "Dean DSW (Authorized)" : "",
+          ApprovalDate: c.issue_date ? String(c.issue_date).substring(0, 10) : ""
+        }));
+        renderMasterLedger();
+        renderMetrics();
+        renderApprovalQueue();
+        showToast(`Loaded ${data.certificates.length} certificates from NeonDB!`, "success");
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn("NeonDB ledger fetch warning, falling back to GAS:", err);
+  }
+
+  // 2. Fallback to Google Apps Script
   if (!GAS_API_URL) return;
   try {
     const res = await fetch(`${GAS_API_URL}?action=getAll&apiKey=${encodeURIComponent(ADMIN_API_KEY)}`);

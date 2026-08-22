@@ -70,9 +70,18 @@ router.post('/login', async (req, res) => {
     const normalizedRole = (user.role || 'VIEWER').toUpperCase();
     console.log(`[AUTH] Login successful: "${cleanEmail}" (Role: ${normalizedRole})`);
 
+    const jwt = require('jsonwebtoken');
+    const { JWT_SECRET } = require('../middleware/auth.middleware');
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: normalizedRole, name: user.name },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
     return res.status(200).json({
       success: true,
       message: 'Login successful',
+      token,
       user: {
         id: user.id,
         name: user.name || user.email.split('@')[0],
