@@ -56,7 +56,6 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/certificates', certificateRoutes);
 
-const path = require('path');
 
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, '../../frontend')));
