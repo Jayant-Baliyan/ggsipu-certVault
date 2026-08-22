@@ -35,14 +35,14 @@
         </div>
       </div>
 
-      <!-- NAVIGATION LINKS: DEFAULTS TO PUBLIC VERIFIER -->
+      <!-- NAVIGATION LINKS: PUBLIC VERIFIER DEFAULT; STAFF TABS UNLOCKED ON LOGIN -->
       <nav class="nav-links" aria-label="Main Navigation">
-        <!-- 1. Public Verifier (Default Active for Everyone) -->
+        <!-- Public Verifier (Active for everyone on homepage) -->
         <button class="nav-btn active" data-tab="verifier-tab" id="nav-btn-verifier">
           <i data-feather="shield-check"></i> Public Verifier
         </button>
 
-        <!-- 2. Staff Portal Tabs (Unlocked upon Staff Authentication) -->
+        <!-- Staff Portal Tabs (Protected: Unlocked on NeonDB Authentication) -->
         <button class="nav-btn staff-tab role-perm-all" data-tab="dashboard-tab" id="nav-btn-dashboard" style="display:none;">
           <i data-feather="grid"></i> Dashboard
         </button>
@@ -277,7 +277,7 @@
           <button class="btn btn-secondary" id="refresh-data-btn">
             <i data-feather="refresh-cw"></i> Refresh Ledger
           </button>
-          <button class="btn btn-primary role-perm-issuer role-perm-admin" id="dashboard-issue-btn">
+          <button class="btn btn-primary" id="dashboard-issue-btn">
             <i data-feather="plus"></i> Issue New Certificates
           </button>
         </div>
@@ -575,8 +575,8 @@
     <section id="users-tab" class="tab-pane">
       <div class="pane-header">
         <div>
-          <h2>Staff Access Control & Users Ledger</h2>
-          <p class="section-desc">Manage authorized university staff accounts, assign RBAC roles (Admin, Approver, Issuer, Viewer), and control portal permissions.</p>
+          <h2>Staff Directory & Role Assignments</h2>
+          <p class="section-desc">Manage university staff members, assign workflow roles (Admin, Approver, Issuer, Viewer), and coordinate certificate issuance.</p>
         </div>
         <button class="btn btn-primary" id="open-add-user-modal-btn">
           <i data-feather="user-plus"></i> Add New Staff Member
@@ -585,16 +585,17 @@
 
       <div class="card table-card">
         <div class="card-header">
-          <h3>Authorized Staff Members (<code>Users</code> Sheet)</h3>
+          <h3>Authorized Staff Members (<code>NeonDB PostgreSQL</code>)</h3>
           <span class="badge badge-valid" id="users-count-badge">0 Staff Members</span>
         </div>
         <div class="table-responsive">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Google Workspace Email</th>
+                <th>Staff Name</th>
+                <th>Email Address</th>
                 <th>Assigned Role</th>
-                <th>Permissions Summary</th>
+                <th>Account Status</th>
                 <th>Date Added</th>
                 <th>Actions</th>
               </tr>
@@ -608,50 +609,41 @@
 
   </main>
 
-  <!-- GOOGLE STAFF AUTHENTICATION MODAL -->
+  <!-- STAFF AUTHENTICATION MODAL -->
   <div class="modal-overlay" id="staff-auth-modal" style="display:none;">
-    <div class="modal-card" style="max-width: 480px;">
+    <div class="modal-card" style="max-width: 440px;">
       <div class="modal-header">
-        <h3><i data-feather="lock"></i> Staff Portal Google Authentication</h3>
+        <h3><i data-feather="lock"></i> Staff Portal Sign In</h3>
         <button class="modal-close" id="close-auth-modal-btn">&times;</button>
       </div>
       <div class="modal-body">
         <p style="font-size:0.875rem; color:var(--text-muted); margin-bottom:16px;">
-          Access to the Staff Portal requires an authorized Google Workspace account listed in the <code>Users</code> ledger.
+          Enter your staff email and password to authenticate against the NeonDB database.
         </p>
 
-        <div class="form-group">
-          <label class="form-label" for="auth-email-input">Staff Google Email Address:</label>
-          <input type="email" id="auth-email-input" class="form-control" placeholder="e.g. dean.dsw@ipu.ac.in" value="dsw.admin@ipu.ac.in">
-        </div>
-
-        <!-- Quick Select Staff Test Accounts -->
-        <div style="margin-top:14px;">
-          <label class="form-label" style="font-size:0.75rem;">Quick Select Authorized Staff Account (Simulation & Testing):</label>
-          <div style="display:flex; flex-direction:column; gap:6px; margin-top:4px;">
-            <button type="button" class="btn btn-secondary btn-sm quick-auth-chip" data-email="dsw.admin@ipu.ac.in" style="justify-content:space-between;">
-              <span><strong>dsw.admin@ipu.ac.in</strong></span>
-              <span class="role-pill admin">Admin</span>
-            </button>
-            <button type="button" class="btn btn-secondary btn-sm quick-auth-chip" data-email="dean.dsw@ipu.ac.in" style="justify-content:space-between;">
-              <span><strong>dean.dsw@ipu.ac.in</strong></span>
-              <span class="role-pill approver">Approver</span>
-            </button>
-            <button type="button" class="btn btn-secondary btn-sm quick-auth-chip" data-email="usict.issuer@ipu.ac.in" style="justify-content:space-between;">
-              <span><strong>usict.issuer@ipu.ac.in</strong></span>
-              <span class="role-pill issuer">Issuer</span>
-            </button>
-            <button type="button" class="btn btn-secondary btn-sm quick-auth-chip" data-email="audit.viewer@ipu.ac.in" style="justify-content:space-between;">
-              <span><strong>audit.viewer@ipu.ac.in</strong></span>
-              <span class="role-pill viewer">Viewer</span>
-            </button>
+        <form id="staff-login-form" onsubmit="event.preventDefault();">
+          <div class="form-group">
+            <label class="form-label" for="auth-email-input">Email Address:</label>
+            <input type="email" id="auth-email-input" class="form-control" placeholder="e.g., yourname@ipu.ac.in" required autocomplete="email">
           </div>
-        </div>
+
+          <div class="form-group" style="margin-top:14px;">
+            <label class="form-label" for="auth-password-input">Password:</label>
+            <div class="password-input-group">
+              <input type="password" id="auth-password-input" class="form-control" placeholder="Enter your password" required autocomplete="current-password">
+              <button type="button" class="password-toggle-btn" id="toggle-auth-password" aria-label="Show password" title="Show password">
+                <i data-feather="eye" id="toggle-auth-password-icon"></i>
+              </button>
+            </div>
+          </div>
+
+          <div id="auth-error-msg" style="display:none; color:var(--danger, #ef4444); font-size:0.875rem; margin-top:14px; padding:10px 14px; background:rgba(239, 68, 68, 0.1); border-radius:6px; border:1px solid rgba(239, 68, 68, 0.25);"></div>
+        </form>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="cancel-auth-modal-btn">Cancel</button>
-        <button class="btn btn-primary" id="confirm-auth-btn">
-          <i data-feather="log-in"></i> Sign In with Google
+        <button class="btn btn-primary" id="confirm-auth-btn" form="staff-login-form" type="submit">
+          <i data-feather="log-in"></i> Sign In
         </button>
       </div>
     </div>
@@ -681,29 +673,49 @@
 
   <!-- ADD / EDIT STAFF USER MODAL -->
   <div class="modal-overlay" id="user-modal" style="display:none;">
-    <div class="modal-card">
+    <div class="modal-card" style="max-width: 480px;">
       <div class="modal-header">
-        <h3><i data-feather="user-check"></i> Add / Edit Staff Member</h3>
+        <h3 id="user-modal-title"><i data-feather="user-plus"></i> Add New Staff Member</h3>
         <button class="modal-close" id="close-user-modal-btn">&times;</button>
       </div>
       <div class="modal-body">
-        <div class="form-group">
-          <label class="form-label" for="user-email-input">Google Workspace Email:</label>
-          <input type="email" id="user-email-input" class="form-control" placeholder="e.g. dean.dsw@ipu.ac.in">
+        <input type="hidden" id="user-edit-id" value="">
+        <div class="form-group" style="margin-bottom:12px;">
+          <label class="form-label" for="user-name-input">Full Name:</label>
+          <input type="text" id="user-name-input" class="form-control" placeholder="e.g. Dr. Ramesh Kumar" required>
         </div>
-        <div class="form-group">
+        <div class="form-group" style="margin-bottom:12px;">
+          <label class="form-label" for="user-email-input">Email Address:</label>
+          <input type="email" id="user-email-input" class="form-control" placeholder="e.g. ramesh@ipu.ac.in" required>
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label class="form-label" for="user-password-input">Password <span id="user-password-optional-label" style="font-weight:normal; font-size:0.75rem; color:var(--text-muted);">(Leave blank to keep current password when editing)</span>:</label>
+          <div class="password-input-group">
+            <input type="password" id="user-password-input" class="form-control" placeholder="Enter password for NeonDB">
+            <button type="button" class="password-toggle-btn" id="toggle-user-password" aria-label="Show password" title="Show password">
+              <i data-feather="eye"></i>
+            </button>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
           <label class="form-label" for="user-role-select">Assigned Role:</label>
           <select id="user-role-select" class="form-select">
-            <option value="Admin">Admin (Full Access & User Management)</option>
-            <option value="Approver">Approver (Dashboard, Approvals & Revocation)</option>
-            <option value="Issuer">Issuer (Dashboard, Bulk Issuer & Certificate Designer)</option>
-            <option value="Viewer">Viewer (Dashboard & Audit Logs read-only)</option>
+            <option value="ADMIN">Admin (Full Access & Configuration)</option>
+            <option value="APPROVER">Approver (Dashboard, Approvals & Revocation)</option>
+            <option value="ISSUER">Issuer (Dashboard, Bulk Issuer & Certificate Designer)</option>
+            <option value="VIEWER">Viewer (Dashboard & Audit Logs read-only)</option>
           </select>
+        </div>
+        <div class="form-group" style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+          <input type="checkbox" id="user-active-checkbox" checked style="width:16px; height:16px; cursor:pointer;">
+          <label for="user-active-checkbox" style="font-size:0.85rem; font-weight:600; cursor:pointer; margin:0;">Active Account (Can log in to portal)</label>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="cancel-user-modal-btn">Cancel</button>
-        <button class="btn btn-primary" id="save-user-btn">Save Staff User</button>
+        <button class="btn btn-primary" id="save-user-btn">
+          <i data-feather="save"></i> Save to NeonDB
+        </button>
       </div>
     </div>
   </div>
@@ -723,7 +735,12 @@
         </div>
         <div class="form-group" style="margin-bottom:14px;">
           <label class="form-label" for="api-key-input">Admin API Key (Optional for External REST API calls):</label>
-          <input type="password" id="api-key-input" class="form-control" placeholder="Enter configured ADMIN_API_KEY">
+          <div class="password-input-group">
+            <input type="password" id="api-key-input" class="form-control" placeholder="Enter configured ADMIN_API_KEY">
+            <button type="button" class="password-toggle-btn" id="toggle-api-key" aria-label="Show API key" title="Show API key">
+              <i data-feather="eye" id="toggle-api-key-icon"></i>
+            </button>
+          </div>
         </div>
       </div>
       <div class="modal-footer">

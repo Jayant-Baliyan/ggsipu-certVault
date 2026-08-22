@@ -9,9 +9,9 @@
 let GAS_API_URL = localStorage.getItem("GGSIPU_GAS_API_URL") || "";
 let ADMIN_API_KEY = localStorage.getItem("GGSIPU_ADMIN_API_KEY") || "";
 const DEFAULT_SALT = "GGSIPU_SALT_2026_DSW_SECURE_HASH";
-
 // Authenticated Staff Session State (null when in public mode)
 let currentStaffSession = null;
+const BACKEND_API_BASE = window.location.origin.includes(':5000') ? '' : 'http://localhost:5000';
 
 // Initial Pre-populated Master Ledger State (Synthetic GGSIPU Test Dataset)
 let mockLedger = [
@@ -109,13 +109,8 @@ let mockAuditLogs = [
   { Timestamp: "2026-08-12 11:15:00", EventType: "REVOCATION", Details: "Certificate GGSIPU-2026-DSW-1005 transitioned from [Approved] -> [Revoked]. Reason: Duplicate registration entry", PerformedBy: "dean.dsw@ipu.ac.in" }
 ];
 
-// Initial Authorized Users Ledger State
-let mockUsers = [
-  { Email: "dsw.admin@ipu.ac.in", Role: "Admin", AddedOn: "2026-08-01" },
-  { Email: "dean.dsw@ipu.ac.in", Role: "Approver", AddedOn: "2026-08-01" },
-  { Email: "usict.issuer@ipu.ac.in", Role: "Issuer", AddedOn: "2026-08-05" },
-  { Email: "audit.viewer@ipu.ac.in", Role: "Viewer", AddedOn: "2026-08-10" }
-];
+// Authorized Users Ledger State (Loaded directly from NeonDB)
+let neonUsers = [];
 
 let parsedCsvRecords = [];
 let html5QrCode = null;
@@ -239,7 +234,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       const auth = JSON.parse(savedSession);
       applyStaffLoginState(auth);
-    } catch (e) {}
+      if (auth.role === "ADMIN") {
+        fetchStaffUsersFromDb();
+      }
+    } catch (e) {
+      resetToPublicMode();
+    }
+  } else {
+    resetToPublicMode();
   }
 
   // Check URL parameters for direct certificate verification (e.g. ?certId=...)
@@ -255,7 +257,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderMetrics();
   renderApprovalQueue();
   renderAuditLogs();
-  renderStaffUsers();
 });
 
 // NAVIGATION
@@ -294,6 +295,258 @@ function switchToTab(tabId) {
   }
 }
 
+// STAFF AUTHENTICATION & LOGIN/LOGOUT
+function setupStaffAuthentication() {
+  const loginBtn = document.getElementById("staff-login-btn");
+  const logoutBtn = document.getElementById("staff-logout-btn");
+  const closeBtn = document.getElementById("close-auth-modal-btn");
+  const cancelBtn = document.getElementById("cancel-auth-modal-btn");
+  const loginForm = document.getElementById("staff-login-form");
+  const confirmBtn = document.getElementById("confirm-auth-btn");
+
+  setupPasswordToggle("toggle-auth-password", "auth-password-input", "password");
+
+  if (loginBtn) loginBtn.addEventListener("click", openStaffAuthModal);
+  if (closeBtn) closeBtn.addEventListener("click", closeStaffAuthModal);
+  if (cancelBtn) cancelBtn.addEventListener("click", closeStaffAuthModal);
+
+  async function handleLoginSubmission(e) {
+    if (e) e.preventDefault();
+
+    const emailInput = document.getElementById("auth-email-input");
+    const passwordInput = document.getElementById("auth-password-input");
+    const errorMsg = document.getElementById("auth-error-msg");
+
+    if (errorMsg) {
+      errorMsg.style.display = "none";
+      errorMsg.textContent = "";
+    }
+
+    const email = emailInput ? emailInput.value.trim() : "";
+    const password = passwordInput ? passwordInput.value : "";
+
+    if (!email) {
+      const msg = "Please enter your staff email address";
+      if (errorMsg) {
+        errorMsg.textContent = msg;
+        errorMsg.style.display = "block";
+      }
+      showToast(msg, "danger");
+      if (emailInput) emailInput.focus();
+      return;
+    }
+
+    if (!password) {
+      const msg = "Please enter your password";
+      if (errorMsg) {
+        errorMsg.textContent = msg;
+        errorMsg.style.display = "block";
+      }
+      showToast(msg, "danger");
+      if (passwordInput) passwordInput.focus();
+      return;
+    }
+
+    const originalBtnText = confirmBtn ? confirmBtn.innerHTML : "";
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.innerHTML = `<i data-feather="loader"></i> Verifying...`;
+      if (window.feather) feather.replace();
+    }
+
+    showToast("Verifying credentials with NeonDB database...", "info");
+
+    try {
+      const response = await fetch(`${BACKEND_API_BASE}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success && data.user) {
+        currentStaffSession = data.user;
+        sessionStorage.setItem("GGSIPU_STAFF_AUTH", JSON.stringify(data.user));
+        applyStaffLoginState(data.user);
+        closeStaffAuthModal();
+        showToast(`Login successful! Welcome, ${data.user.name || data.user.email}`, "success");
+
+        if (data.user.role === "ADMIN") {
+          fetchStaffUsersFromDb();
+        }
+
+        switchToTab("dashboard-tab");
+      } else {
+        const msg = data.message || "Invalid email or password. Please verify your credentials.";
+        if (errorMsg) {
+          errorMsg.textContent = msg;
+          errorMsg.style.display = "block";
+        }
+        showToast(msg, "danger");
+      }
+    } catch (err) {
+      console.error("Login backend error:", err);
+      const msg = "Backend connection error. Please ensure the Express NeonDB backend is running on http://localhost:5000";
+      if (errorMsg) {
+        errorMsg.textContent = msg;
+        errorMsg.style.display = "block";
+      }
+      showToast(msg, "danger");
+    } finally {
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.innerHTML = originalBtnText || `<i data-feather="log-in"></i> Sign In`;
+        if (window.feather) feather.replace();
+      }
+    }
+  }
+
+  if (loginForm) {
+    loginForm.addEventListener("submit", handleLoginSubmission);
+  }
+
+  if (confirmBtn) {
+    confirmBtn.addEventListener("click", handleLoginSubmission);
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", () => {
+      currentStaffSession = null;
+      sessionStorage.removeItem("GGSIPU_STAFF_AUTH");
+      resetToPublicMode();
+      showToast("Signed out of Staff Portal. Returned to Public Verifier.", "info");
+      switchToTab("verifier-tab");
+    });
+  }
+}
+
+function openStaffAuthModal() {
+  const errorMsg = document.getElementById("auth-error-msg");
+  if (errorMsg) {
+    errorMsg.style.display = "none";
+    errorMsg.textContent = "";
+  }
+  const emailInput = document.getElementById("auth-email-input");
+  const passwordInput = document.getElementById("auth-password-input");
+  if (emailInput) emailInput.value = "";
+  if (passwordInput) passwordInput.value = "";
+  resetPasswordVisibility("toggle-auth-password", "auth-password-input", "password");
+  const modal = document.getElementById("staff-auth-modal");
+  if (modal) {
+    modal.style.display = "flex";
+  }
+  if (emailInput) emailInput.focus();
+  if (window.feather) feather.replace();
+}
+
+function closeStaffAuthModal() {
+  const modal = document.getElementById("staff-auth-modal");
+  if (modal) modal.style.display = "none";
+}
+
+function applyStaffLoginState(user) {
+  currentStaffSession = user;
+  const role = (user.role || "VIEWER").toUpperCase();
+  const userName = user.name || (role === "ADMIN" ? "Admin" : role === "ISSUER" ? "Issuer" : role === "APPROVER" ? "Approver" : "User");
+
+  const loginBtn = document.getElementById("staff-login-btn");
+  const userBadge = document.getElementById("staff-user-badge");
+  if (loginBtn) loginBtn.style.display = "none";
+  if (userBadge) userBadge.style.display = "flex";
+
+  const emailElem = document.getElementById("active-user-email");
+  if (emailElem) {
+    emailElem.textContent = `Welcome, ${userName}`;
+  }
+
+  const rolePill = document.getElementById("active-user-role");
+  if (rolePill) {
+    rolePill.textContent = `Role: ${role}`;
+    rolePill.className = `role-pill ${role.toLowerCase()}`;
+  }
+
+  const dashboardBtn = document.getElementById("nav-btn-dashboard");
+  const issuerBtn = document.getElementById("nav-btn-issuer");
+  const approvalBtn = document.getElementById("nav-btn-approval");
+  const templateBtn = document.getElementById("nav-btn-template");
+  const auditBtn = document.getElementById("nav-btn-audit");
+  const usersBtn = document.getElementById("nav-btn-users");
+  const configBtn = document.getElementById("api-config-btn");
+
+  if (dashboardBtn) dashboardBtn.style.display = "inline-flex";
+
+  if (role === "ADMIN") {
+    if (issuerBtn) issuerBtn.style.display = "inline-flex";
+    if (approvalBtn) approvalBtn.style.display = "inline-flex";
+    if (templateBtn) templateBtn.style.display = "inline-flex";
+    if (auditBtn) auditBtn.style.display = "inline-flex";
+    if (usersBtn) usersBtn.style.display = "inline-flex";
+    if (configBtn) configBtn.style.display = "inline-flex";
+  } else if (role === "ISSUER") {
+    if (issuerBtn) issuerBtn.style.display = "inline-flex";
+    if (templateBtn) templateBtn.style.display = "inline-flex";
+    if (approvalBtn) approvalBtn.style.display = "none";
+    if (auditBtn) auditBtn.style.display = "none";
+    if (usersBtn) usersBtn.style.display = "none";
+    if (configBtn) configBtn.style.display = "none";
+  } else if (role === "APPROVER") {
+    if (approvalBtn) approvalBtn.style.display = "inline-flex";
+    if (auditBtn) auditBtn.style.display = "inline-flex";
+    if (issuerBtn) issuerBtn.style.display = "none";
+    if (templateBtn) templateBtn.style.display = "none";
+    if (usersBtn) usersBtn.style.display = "none";
+    if (configBtn) configBtn.style.display = "none";
+  } else {
+    // VIEWER
+    if (issuerBtn) issuerBtn.style.display = "none";
+    if (approvalBtn) approvalBtn.style.display = "none";
+    if (templateBtn) templateBtn.style.display = "none";
+    if (auditBtn) auditBtn.style.display = "inline-flex";
+    if (usersBtn) usersBtn.style.display = "none";
+    if (configBtn) configBtn.style.display = "none";
+  }
+
+  if (window.feather) feather.replace();
+}
+
+function resetToPublicMode() {
+  currentStaffSession = null;
+  const loginBtn = document.getElementById("staff-login-btn");
+  const userBadge = document.getElementById("staff-user-badge");
+  if (loginBtn) loginBtn.style.display = "inline-flex";
+  if (userBadge) userBadge.style.display = "none";
+
+  document.querySelectorAll(".staff-tab").forEach(t => t.style.display = "none");
+  document.querySelectorAll(".role-perm-admin").forEach(el => el.style.display = "none");
+
+  if (window.feather) feather.replace();
+}
+
+async function fetchStaffUsersFromDb() {
+  try {
+    const res = await fetch(`${BACKEND_API_BASE}/api/auth/users`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.users)) {
+        neonUsers = data.users.map(u => ({
+          id: u.id,
+          Name: u.name || u.email.split('@')[0],
+          Email: u.email,
+          Role: (u.role || 'VIEWER').toUpperCase(),
+          is_active: u.is_active !== false,
+          AddedOn: u.created_at ? new Date(u.created_at).toISOString().split('T')[0] : '2026-08-01'
+        }));
+        renderStaffUsers();
+      }
+    }
+  } catch (err) {
+    console.warn("Could not fetch staff users from NeonDB backend:", err);
+  }
+}
+
 // THEME TOGGLE
 function setupThemeToggle() {
   const toggleBtn = document.getElementById("theme-toggle");
@@ -307,143 +560,43 @@ function setupThemeToggle() {
   });
 }
 
-// STAFF AUTHENTICATION & LOGIN/LOGOUT
-function setupStaffAuthentication() {
-  const loginBtn = document.getElementById("staff-login-btn");
-  const logoutBtn = document.getElementById("staff-logout-btn");
-  const modal = document.getElementById("staff-auth-modal");
-  const closeBtn = document.getElementById("close-auth-modal-btn");
-  const cancelBtn = document.getElementById("cancel-auth-modal-btn");
-  const confirmBtn = document.getElementById("confirm-auth-btn");
+function setupPasswordToggle(buttonId, inputId, label = "password") {
+  const toggleBtn = document.getElementById(buttonId);
+  const input = document.getElementById(inputId);
+  if (!toggleBtn || !input) return;
 
-  if (loginBtn) loginBtn.addEventListener("click", openStaffAuthModal);
-
-  if (closeBtn) closeBtn.addEventListener("click", closeStaffAuthModal);
-  if (cancelBtn) cancelBtn.addEventListener("click", closeStaffAuthModal);
-
-  // Quick select bot / test accounts
-  document.querySelectorAll(".quick-auth-chip").forEach(chip => {
-    chip.addEventListener("click", () => {
-      const email = chip.getAttribute("data-email");
-      document.getElementById("auth-email-input").value = email;
-    });
-  });
-
-  if (confirmBtn) {
-    confirmBtn.addEventListener("click", async () => {
-      const email = document.getElementById("auth-email-input").value.trim().toLowerCase();
-      if (!email) {
-        showToast("Please enter a Google Workspace email address", "danger");
-        return;
-      }
-
-      showToast("Authenticating with Google Account: " + email + "...");
-
-      // Check via Google Apps Script RPC if available
-      if (typeof google !== "undefined" && google.script && google.script.run) {
-        google.script.run
-          .withSuccessHandler((res) => {
-            if (res && res.status === "success") {
-              const authData = { email: res.email, role: res.role };
-              sessionStorage.setItem("GGSIPU_STAFF_AUTH", JSON.stringify(authData));
-              applyStaffLoginState(authData);
-              closeStaffAuthModal();
-              showToast(`Welcome back, ${res.email} (${res.role})!`, "success");
-              switchToTab("dashboard-tab");
-            } else {
-              showToast(res.message || "Authentication failed: Email not registered.", "danger");
-            }
-          })
-          .withFailureHandler((err) => {
-            showToast("Server authentication error: " + err.message, "danger");
-          })
-          .apiAuthenticateStaff(email);
-        return;
-      }
-
-      // Local / Bot simulation check against Users ledger
-      const foundUser = mockUsers.find(u => u.Email.toLowerCase() === email);
-      if (foundUser) {
-        const authData = { email: foundUser.Email, role: foundUser.Role };
-        sessionStorage.setItem("GGSIPU_STAFF_AUTH", JSON.stringify(authData));
-        applyStaffLoginState(authData);
-        closeStaffAuthModal();
-        showToast(`Signed in successfully as ${foundUser.Role} (${foundUser.Email})!`, "success");
-        switchToTab("dashboard-tab");
-      } else {
-        showToast(`Access Denied: '${email}' is not in the Users ledger.`, "danger");
-      }
-    });
-  }
-
-  if (logoutBtn) {
-    logoutBtn.addEventListener("click", () => {
-      sessionStorage.removeItem("GGSIPU_STAFF_AUTH");
-      currentStaffSession = null;
-      resetToPublicMode();
-      showToast("Signed out of Staff Portal. Returned to Public Verifier.", "info");
-      switchToTab("verifier-tab");
-    });
-  }
-}
-
-function openStaffAuthModal() {
-  document.getElementById("staff-auth-modal").style.display = "flex";
-}
-
-function closeStaffAuthModal() {
-  document.getElementById("staff-auth-modal").style.display = "none";
-}
-
-function applyStaffLoginState(auth) {
-  currentStaffSession = auth;
-  const role = (auth.role || "Viewer").toLowerCase();
-
-  // Hide login button, show user badge
-  document.getElementById("staff-login-btn").style.display = "none";
-  const userBadge = document.getElementById("staff-user-badge");
-  userBadge.style.display = "flex";
-  document.getElementById("active-user-email").textContent = auth.email;
-  
-  const rolePill = document.getElementById("active-user-role");
-  rolePill.textContent = auth.role.toUpperCase();
-  rolePill.className = `role-pill ${role}`;
-
-  // Unlock staff navigation tabs based on role permissions
-  document.querySelectorAll(".staff-tab").forEach(tabBtn => {
-    const classList = Array.from(tabBtn.classList);
-    const requiredRoles = classList
-      .filter(c => c.startsWith("role-perm-"))
-      .map(c => c.replace("role-perm-", "").toLowerCase());
-
-    if (requiredRoles.includes("all") || requiredRoles.includes(role) || role === "admin") {
-      tabBtn.style.display = "inline-flex";
-    } else {
-      tabBtn.style.display = "none";
+  toggleBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const isCurrentlyPassword = input.type === "password";
+    input.type = isCurrentlyPassword ? "text" : "password";
+    const newTitle = isCurrentlyPassword ? `Hide ${label}` : `Show ${label}`;
+    const iconName = isCurrentlyPassword ? "eye-off" : "eye";
+    toggleBtn.setAttribute("title", newTitle);
+    toggleBtn.setAttribute("aria-label", newTitle);
+    toggleBtn.innerHTML = `<i data-feather="${iconName}"></i>`;
+    if (window.feather) {
+      feather.replace();
     }
+    input.focus();
   });
-
-  // Admin buttons (Config, Add User)
-  document.querySelectorAll(".role-perm-admin").forEach(el => {
-    if (role === "admin") {
-      el.style.display = "";
-    } else {
-      el.style.display = "none";
-    }
-  });
-
-  feather.replace();
 }
 
-function resetToPublicMode() {
-  document.getElementById("staff-login-btn").style.display = "inline-flex";
-  document.getElementById("staff-user-badge").style.display = "none";
-
-  // Hide all staff tabs
-  document.querySelectorAll(".staff-tab").forEach(t => t.style.display = "none");
-  document.querySelectorAll(".role-perm-admin").forEach(el => el.style.display = "none");
-
-  feather.replace();
+function resetPasswordVisibility(buttonId, inputId, label = "password") {
+  const toggleBtn = document.getElementById(buttonId);
+  const input = document.getElementById(inputId);
+  if (input) {
+    input.type = "password";
+  }
+  if (toggleBtn) {
+    const title = `Show ${label}`;
+    toggleBtn.setAttribute("title", title);
+    toggleBtn.setAttribute("aria-label", title);
+    toggleBtn.innerHTML = '<i data-feather="eye"></i>';
+    if (window.feather) {
+      feather.replace();
+    }
+  }
 }
 
 // PUBLIC VERIFICATION PORTAL
@@ -775,8 +928,7 @@ function renderMasterLedger() {
     return;
   }
 
-  const role = currentStaffSession ? currentStaffSession.role.toLowerCase() : "viewer";
-  const canRevoke = (role === "admin" || role === "approver");
+  const canRevoke = true;
 
   filtered.forEach(rec => {
     const tr = document.createElement("tr");
@@ -960,7 +1112,7 @@ async function processCsvBatchIssuance() {
   const batchMerkleRoot = await computeMerkleRoot(hashesList);
 
   const newRecords = [];
-  const issuer = currentStaffSession ? currentStaffSession.email : "Authorized Staff";
+  const issuer = currentStaffSession ? (currentStaffSession.name || currentStaffSession.email) : "Authorized Staff";
 
   for (let rec of parsedCsvRecords) {
     const newRecord = {
@@ -1108,7 +1260,7 @@ async function approveSingleCert(certId) {
     return;
   }
 
-  const approverName = currentStaffSession ? currentStaffSession.email : "Dean DSW";
+  const approverName = currentStaffSession ? (currentStaffSession.name || currentStaffSession.email) : "Dean DSW";
   target.Status = "Approved";
   target.ApprovedBy = approverName + " (Authorized Approver)";
   target.ApprovalDate = new Date().toISOString().split("T")[0];
@@ -1154,7 +1306,7 @@ async function approveSelectedBatch() {
 
   let approvedCount = 0;
   const today = new Date().toISOString().split("T")[0];
-  const approverName = currentStaffSession ? currentStaffSession.email : "Dean DSW";
+  const approverName = currentStaffSession ? (currentStaffSession.name || currentStaffSession.email) : "Dean DSW";
 
   for (let chk of checkboxes) {
     const certId = chk.value;
@@ -1423,7 +1575,7 @@ async function executeRevocation() {
 
   const prevStatus = target.Status;
   target.Status = "Revoked";
-  const revoker = currentStaffSession ? currentStaffSession.email : "Dean DSW";
+  const revoker = currentStaffSession ? (currentStaffSession.name || currentStaffSession.email) : "Dean DSW";
 
   if (GAS_API_URL) {
     try {
@@ -1458,7 +1610,7 @@ async function executeRevocation() {
   showToast(`Certificate ${currentRevocationCertId} has been REVOKED.`, "danger");
 }
 
-// STAFF USERS MANAGEMENT (Admin only)
+// STAFF USERS MANAGEMENT (NeonDB Backend)
 function setupStaffUserManagement() {
   const openBtn = document.getElementById("open-add-user-modal-btn");
   const modal = document.getElementById("user-modal");
@@ -1466,12 +1618,21 @@ function setupStaffUserManagement() {
   const cancelBtn = document.getElementById("cancel-user-modal-btn");
   const saveBtn = document.getElementById("save-user-btn");
 
+  setupPasswordToggle("toggle-user-password", "user-password-input", "password");
+
   if (!openBtn) return;
 
   openBtn.addEventListener("click", () => {
+    document.getElementById("user-modal-title").innerHTML = `<i data-feather="user-plus"></i> Add New Staff Member`;
+    document.getElementById("user-edit-id").value = "";
+    document.getElementById("user-name-input").value = "";
     document.getElementById("user-email-input").value = "";
-    document.getElementById("user-role-select").value = "Approver";
+    document.getElementById("user-password-input").value = "";
+    document.getElementById("user-role-select").value = "ADMIN";
+    document.getElementById("user-active-checkbox").checked = true;
+    resetPasswordVisibility("toggle-user-password", "user-password-input", "password");
     modal.style.display = "flex";
+    if (window.feather) feather.replace();
   });
 
   const closeModal = () => { modal.style.display = "none"; };
@@ -1479,42 +1640,70 @@ function setupStaffUserManagement() {
   if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
 
   if (saveBtn) {
-    saveBtn.addEventListener("click", () => {
+    saveBtn.addEventListener("click", async () => {
+      const name = document.getElementById("user-name-input").value.trim();
       const email = document.getElementById("user-email-input").value.trim().toLowerCase();
+      const password = document.getElementById("user-password-input").value;
       const role = document.getElementById("user-role-select").value;
+      const isActive = document.getElementById("user-active-checkbox").checked;
+      const editId = document.getElementById("user-edit-id").value;
 
       if (!email) {
         showToast("Please enter an email address", "danger");
         return;
       }
 
-      const existingIdx = mockUsers.findIndex(u => u.Email.toLowerCase() === email);
-      const today = new Date().toISOString().split("T")[0];
-
-      if (existingIdx !== -1) {
-        const oldRole = mockUsers[existingIdx].Role;
-        mockUsers[existingIdx].Role = role;
-        mockAuditLogs.unshift({
-          Timestamp: new Date().toLocaleString(),
-          EventType: "USER_ROLE_CHANGED",
-          Details: `Updated role for ${email} from [${oldRole}] -> [${role}]`,
-          PerformedBy: currentStaffSession ? currentStaffSession.email : "Admin"
-        });
-        showToast(`Updated role for ${email} to ${role}`, "success");
-      } else {
-        mockUsers.push({ Email: email, Role: role, AddedOn: today });
-        mockAuditLogs.unshift({
-          Timestamp: new Date().toLocaleString(),
-          EventType: "USER_ADDED",
-          Details: `Added staff user ${email} with role [${role}]`,
-          PerformedBy: currentStaffSession ? currentStaffSession.email : "Admin"
-        });
-        showToast(`Added ${email} as ${role}`, "success");
+      if (!name) {
+        showToast("Please enter the staff member's name", "danger");
+        return;
       }
 
-      renderStaffUsers();
-      renderAuditLogs();
-      closeModal();
+      if (!editId && !password) {
+        showToast("Please enter a password for the new staff account", "danger");
+        return;
+      }
+
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = `<i data-feather="loader"></i> Saving to NeonDB...`;
+      if (window.feather) feather.replace();
+
+      try {
+        const res = await fetch(`${BACKEND_API_BASE}/api/auth/users`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            email,
+            password: password || undefined,
+            role,
+            is_active: isActive
+          })
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          showToast(data.message || `Saved staff user ${email} to NeonDB`, "success");
+          mockAuditLogs.unshift({
+            Timestamp: new Date().toLocaleString(),
+            EventType: editId ? "USER_ROLE_CHANGED" : "USER_ADDED",
+            Details: `${editId ? 'Updated' : 'Added'} staff user ${name} (${email}, Role: ${role}) in NeonDB`,
+            PerformedBy: currentStaffSession ? currentStaffSession.email : "Admin"
+          });
+          await fetchStaffUsersFromDb();
+          renderAuditLogs();
+          closeModal();
+        } else {
+          showToast(data.message || "Failed to save user in NeonDB", "danger");
+        }
+      } catch (err) {
+        console.error("Backend error saving user to NeonDB:", err);
+        showToast("Database connection error. Ensure Express NeonDB backend is running.", "danger");
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = `<i data-feather="save"></i> Save to NeonDB`;
+        if (window.feather) feather.replace();
+      }
     });
   }
 }
@@ -1524,34 +1713,37 @@ function renderStaffUsers() {
   const badge = document.getElementById("users-count-badge");
   if (!tbody) return;
 
-  badge.textContent = `${mockUsers.length} Staff Members`;
+  badge.textContent = `${neonUsers.length} Staff Members`;
   tbody.innerHTML = "";
 
-  const rolePermsDesc = {
-    "Admin": "Full administrative control, user management, API config",
-    "Approver": "Dashboard, certificate approvals & revocations, audit logs",
-    "Issuer": "Dashboard, bulk CSV issuance & certificate designer",
-    "Viewer": "Read-only access to dashboard & audit logs"
-  };
+  if (neonUsers.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--text-muted);">No staff members found in NeonDB.</td></tr>`;
+    return;
+  }
 
-  mockUsers.forEach(u => {
+  neonUsers.forEach(u => {
     const tr = document.createElement("tr");
-    const safeEmail = escapeHtml(u.Email);
-    const safeRole = escapeHtml(u.Role);
-    const safeAdded = escapeHtml(u.AddedOn);
-    const perms = rolePermsDesc[u.Role] || "Standard staff access";
+    const safeName = escapeHtml(u.Name || u.name || (u.Email || u.email || "").split('@')[0]);
+    const safeEmail = escapeHtml(u.Email || u.email || "");
+    const safeRole = escapeHtml((u.Role || u.role || 'VIEWER').toUpperCase());
+    const safeAdded = escapeHtml(u.AddedOn || (u.created_at ? new Date(u.created_at).toISOString().split('T')[0] : '2026-08-01'));
+    const isActive = (u.is_active !== false);
+    const statusPill = isActive
+      ? `<span class="badge badge-valid" style="font-size:0.75rem;">Active</span>`
+      : `<span class="badge badge-revoked" style="font-size:0.75rem;">Deactivated</span>`;
 
     tr.innerHTML = `
-      <td><strong>${safeEmail}</strong></td>
+      <td><strong>${safeName}</strong></td>
+      <td><code>${safeEmail}</code></td>
       <td><span class="role-pill ${safeRole.toLowerCase()}">${safeRole}</span></td>
-      <td style="font-size:0.8rem; color:var(--text-muted);">${perms}</td>
+      <td>${statusPill}</td>
       <td>${safeAdded}</td>
       <td>
         <div style="display:flex; gap:6px;">
-          <button class="btn btn-secondary btn-sm edit-user-btn" data-email="${safeEmail}" data-role="${safeRole}" title="Change Role">
+          <button class="btn btn-secondary btn-sm edit-user-btn" data-id="${u.id || ''}" data-name="${safeName}" data-email="${safeEmail}" data-role="${safeRole}" data-active="${isActive}" title="Edit User">
             <i data-feather="edit-2"></i> Edit
           </button>
-          <button class="btn btn-danger btn-sm remove-user-btn" data-email="${safeEmail}" title="Remove Staff Member">
+          <button class="btn btn-danger btn-sm remove-user-btn" data-id="${u.id || ''}" data-email="${safeEmail}" title="Remove Staff Member">
             <i data-feather="trash-2"></i> Remove
           </button>
         </div>
@@ -1562,33 +1754,57 @@ function renderStaffUsers() {
 
   tbody.querySelectorAll(".edit-user-btn").forEach(btn => {
     btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-id");
+      const name = btn.getAttribute("data-name");
       const email = btn.getAttribute("data-email");
       const role = btn.getAttribute("data-role");
+      const active = btn.getAttribute("data-active") === "true";
+
+      document.getElementById("user-modal-title").innerHTML = `<i data-feather="edit-2"></i> Edit Staff Member`;
+      document.getElementById("user-edit-id").value = id;
+      document.getElementById("user-name-input").value = name;
       document.getElementById("user-email-input").value = email;
+      document.getElementById("user-password-input").value = "";
       document.getElementById("user-role-select").value = role;
+      document.getElementById("user-active-checkbox").checked = active;
+      resetPasswordVisibility("toggle-user-password", "user-password-input", "password");
       document.getElementById("user-modal").style.display = "flex";
+      if (window.feather) feather.replace();
     });
   });
 
   tbody.querySelectorAll(".remove-user-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
+      const id = btn.getAttribute("data-id");
       const email = btn.getAttribute("data-email");
       if (confirm(`Are you sure you want to remove staff access for ${email}?`)) {
-        mockUsers = mockUsers.filter(u => u.Email.toLowerCase() !== email.toLowerCase());
-        mockAuditLogs.unshift({
-          Timestamp: new Date().toLocaleString(),
-          EventType: "USER_REMOVED",
-          Details: `Removed staff user ${email}`,
-          PerformedBy: currentStaffSession ? currentStaffSession.email : "Admin"
-        });
-        renderStaffUsers();
-        renderAuditLogs();
-        showToast(`Removed staff user ${email}`, "info");
+        try {
+          const deleteUrl = id ? `${BACKEND_API_BASE}/api/auth/users/${id}` : `${BACKEND_API_BASE}/api/auth/users/${encodeURIComponent(email)}`;
+          const res = await fetch(deleteUrl, { method: "DELETE" });
+          const data = await res.json();
+
+          if (res.ok && data.success) {
+            showToast(data.message || `Removed user ${email} from NeonDB`, "info");
+            mockAuditLogs.unshift({
+              Timestamp: new Date().toLocaleString(),
+              EventType: "USER_REMOVED",
+              Details: `Removed staff user ${email} from NeonDB`,
+              PerformedBy: currentStaffSession ? currentStaffSession.email : "Admin"
+            });
+            await fetchStaffUsersFromDb();
+            renderAuditLogs();
+          } else {
+            showToast(data.message || "Failed to remove user", "danger");
+          }
+        } catch (err) {
+          console.error("Backend error deleting user from NeonDB:", err);
+          showToast("Failed to delete user from NeonDB", "danger");
+        }
       }
     });
   });
 
-  feather.replace();
+  if (window.feather) feather.replace();
 }
 
 // API CONFIGURATION MODAL
@@ -1599,11 +1815,14 @@ function setupApiConfigModal() {
   const cancelBtn = document.getElementById("cancel-api-config-btn");
   const saveBtn = document.getElementById("save-api-config-btn");
 
+  setupPasswordToggle("toggle-api-key", "api-key-input", "API key");
+
   if (!openBtn) return;
 
   openBtn.addEventListener("click", () => {
     document.getElementById("gas-url-input").value = GAS_API_URL;
     document.getElementById("api-key-input").value = ADMIN_API_KEY;
+    resetPasswordVisibility("toggle-api-key", "api-key-input", "API key");
     modal.style.display = "flex";
   });
 
