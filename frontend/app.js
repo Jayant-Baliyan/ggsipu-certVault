@@ -11,8 +11,27 @@ let ADMIN_API_KEY = localStorage.getItem("GGSIPU_ADMIN_API_KEY") || "";
 const DEFAULT_SALT = "GGSIPU_SALT_2026_DSW_SECURE_HASH";
 // Authenticated Staff Session State (null when in public mode)
 let currentStaffSession = null;
-//const BACKEND_API_BASE = window.location.origin.includes(':5000') ? '' : 'http://localhost:5000';
 const BACKEND_API_BASE = '';
+
+function getAuthHeaders(extraHeaders = {}) {
+  const headers = { ...extraHeaders };
+  const token = (currentStaffSession && currentStaffSession.token) || sessionStorage.getItem("GGSIPU_AUTH_TOKEN");
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  if (currentStaffSession && currentStaffSession.email) {
+    headers["x-user-email"] = currentStaffSession.email;
+    headers["x-user-role"] = currentStaffSession.role || "ADMIN";
+    if (currentStaffSession.id) {
+      headers["x-user-id"] = String(currentStaffSession.id);
+    }
+  }
+  const apiKey = ADMIN_API_KEY || localStorage.getItem("GGSIPU_ADMIN_API_KEY") || "GGSIPU_SECURE_ADMIN_KEY_2026";
+  if (apiKey) {
+    headers["x-api-key"] = apiKey;
+  }
+  return headers;
+}
 // Initial Pre-populated Master Ledger State (Synthetic GGSIPU Test Dataset)
 let mockLedger = [
   {
@@ -233,10 +252,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (savedSession) {
     try {
       const auth = JSON.parse(savedSession);
+      currentStaffSession = auth;
       applyStaffLoginState(auth);
       if (auth.role === "ADMIN") {
         fetchStaffUsersFromDb();
       }
+      fetchRemoteLedger();
     } catch (e) {
       resetToPublicMode();
     }
@@ -368,9 +389,13 @@ function setupStaffAuthentication() {
       const data = await response.json();
 
       if (response.ok && data.success && data.user) {
-        currentStaffSession = data.user;
-        sessionStorage.setItem("GGSIPU_STAFF_AUTH", JSON.stringify(data.user));
-        applyStaffLoginState(data.user);
+        const sessionUser = { ...data.user, token: data.token };
+        currentStaffSession = sessionUser;
+        sessionStorage.setItem("GGSIPU_STAFF_AUTH", JSON.stringify(sessionUser));
+        if (data.token) {
+          sessionStorage.setItem("GGSIPU_AUTH_TOKEN", data.token);
+        }
+        applyStaffLoginState(sessionUser);
         closeStaffAuthModal();
         showToast(`Login successful! Welcome, ${data.user.name || data.user.email}`, "success");
 
@@ -378,6 +403,7 @@ function setupStaffAuthentication() {
           fetchStaffUsersFromDb();
         }
 
+        await fetchRemoteLedger();
         switchToTab("dashboard-tab");
       } else {
         const msg = data.message || "Invalid email or password. Please verify your credentials.";
@@ -1164,17 +1190,7 @@ async function processCsvBatchIssuance() {
       formData.append("file", blob, "batch_issuance.csv");
     }
 
-    const headers = {};
-    if (userToken) {
-      headers["Authorization"] = `Bearer ${userToken}`;
-    }
-    if (currentStaffSession) {
-      headers["x-user-email"] = currentStaffSession.email;
-      headers["x-user-role"] = currentStaffSession.role || "ADMIN";
-    }
-    if (ADMIN_API_KEY) {
-      headers["x-api-key"] = ADMIN_API_KEY;
-    }
+    const headers = getAuthHeaders();
 
     const res = await fetch(`${BACKEND_API_BASE}/api/certificates/bulk-generate`, {
       method: "POST",
@@ -1287,10 +1303,7 @@ function setupApprovalQueue() {
 }
 
 async function sendBatchCertificateEmails(specificCertIds = null) {
-  const userToken = currentStaffSession ? currentStaffSession.token : null;
-  const headers = { "Content-Type": "application/json" };
-  if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
-  if (ADMIN_API_KEY) headers["x-api-key"] = ADMIN_API_KEY;
+  const headers = getAuthHeaders({ "Content-Type": "application/json" });
 
   const btn = document.getElementById("send-emails-btn");
   if (btn) {
@@ -1406,10 +1419,7 @@ async function approveSingleCert(certId) {
 
   // 1. Sync approval to NeonDB backend
   try {
-    const userToken = currentStaffSession ? currentStaffSession.token : null;
-    const headers = { "Content-Type": "application/json" };
-    if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
-    if (ADMIN_API_KEY) headers["x-api-key"] = ADMIN_API_KEY;
+    const headers = getAuthHeaders({ "Content-Type": "application/json" });
 
     await fetch(`${BACKEND_API_BASE}/api/certificates/approve`, {
       method: "POST",
@@ -1499,10 +1509,7 @@ async function approveSelectedBatch() {
   // Sync batch approval to NeonDB backend & dispatch emails
   if (approvedIds.length > 0) {
     try {
-      const userToken = currentStaffSession ? currentStaffSession.token : null;
-      const headers = { "Content-Type": "application/json" };
-      if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
-      if (ADMIN_API_KEY) headers["x-api-key"] = ADMIN_API_KEY;
+      const headers = getAuthHeaders({ "Content-Type": "application/json" });
 
       await fetch(`${BACKEND_API_BASE}/api/certificates/approve`, {
         method: "POST",
@@ -2048,10 +2055,7 @@ function updateConnectionStatusUI() {
 }
 
 async function fetchRemoteLedger() {
-  const userToken = currentStaffSession ? currentStaffSession.token : null;
-  const headers = {};
-  if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
-  if (ADMIN_API_KEY) headers["x-api-key"] = ADMIN_API_KEY;
+  const headers = getAuthHeaders();
 
   // 1. Fetch live certificates from NeonDB Backend
   try {

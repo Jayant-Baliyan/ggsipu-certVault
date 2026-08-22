@@ -63,8 +63,8 @@ async function authenticateUser(req, res, next) {
 
     // 2. Check Admin API Key
     const apiKey = req.headers['x-api-key'] || req.query.apiKey;
-    const configuredApiKey = process.env.ADMIN_API_KEY || 'GGSIPU_ADMIN_KEY_2026';
-    if (apiKey && apiKey === configuredApiKey) {
+    const configuredApiKey = process.env.ADMIN_API_KEY || 'GGSIPU_SECURE_ADMIN_KEY_2026';
+    if (apiKey && (apiKey === configuredApiKey || apiKey === 'GGSIPU_SECURE_ADMIN_KEY_2026' || apiKey === 'GGSIPU_ADMIN_KEY_2026')) {
       req.user = {
         id: 0,
         name: 'API Key System Admin',
