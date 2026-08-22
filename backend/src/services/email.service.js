@@ -5,24 +5,29 @@ require('dotenv').config();
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
 /**
- * Creates and returns a Nodemailer transporter using Gmail service.
- * Reads credentials strictly from process.env.
+ * Creates and returns a Nodemailer transporter using direct Gmail SSL (Port 465).
+ * Avoids port 587 STARTTLS hanging on cloud platforms like Render.
  */
 function getEmailTransporter() {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
 
   if (!user || !pass) {
-    console.warn('[EMAIL SERVICE] Missing GMAIL_USER or GMAIL_APP_PASSWORD in environment variables. Emails cannot be sent.');
+    console.warn('[EMAIL SERVICE] Missing GMAIL_USER or GMAIL_APP_PASSWORD in environment variables.');
     return null;
   }
 
   return nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // Use Direct SSL on port 465
     auth: {
       user: user.trim(),
       pass: pass.trim(),
     },
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 10000,
   });
 }
 
@@ -38,6 +43,8 @@ function delay(ms = 500) {
 
 /**
  * Sends a certificate notification email to a student.
+ * Uses Google Apps Script relay (HTTPS port 443) when available to bypass cloud SMTP port blocking,
+ * and falls back to direct Gmail SSL (port 465).
  *
  * @param {Object} params
  * @param {string} params.name - Recipient student name
@@ -46,19 +53,19 @@ function delay(ms = 500) {
  * @param {string} params.pdf_url - Direct Google Drive or viewable PDF URL
  * @returns {Promise<Object>} Send info
  */
-async function sendCertificateEmail({ name, email, cert_id, pdf_url }) {
-  const transporter = getEmailTransporter();
-
-  if (!transporter) {
-    throw new Error('Email service is not configured. Please set GMAIL_USER and GMAIL_APP_PASSWORD in environment variables.');
-  }
+async function sendCertificateEmail(params = {}) {
+  const name = params.name;
+  const email = params.email;
+  const certId = params.cert_id || params.certId || 'N/A';
+  const pdfUrl = params.pdf_url || params.pdfUrl || '#';
 
   if (!email) {
-    throw new Error(`Recipient email address is missing for certificate ${cert_id || 'unknown'}`);
+    throw new Error(`Recipient email address is missing for certificate ${certId}`);
   }
 
-  const senderUser = process.env.GMAIL_USER;
-  const certificateLink = pdf_url || '#';
+  const gasUrl = process.env.GAS_API_URL;
+  const adminApiKey = process.env.ADMIN_API_KEY || 'GGSIPU_SECURE_ADMIN_KEY_2026';
+  const certificateLink = pdfUrl || '#';
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -91,7 +98,7 @@ async function sendCertificateEmail({ name, email, cert_id, pdf_url }) {
           
           <div class="cert-card">
             <div style="font-size: 12px; color: #64748b; margin-bottom: 4px;">CERTIFICATE IDENTIFIER</div>
-            <div class="cert-id">${cert_id || 'N/A'}</div>
+            <div class="cert-id">${certId || 'N/A'}</div>
           </div>
 
           <p>You can view, verify, and download your digital certificate directly via the link below:</p>
@@ -114,14 +121,52 @@ async function sendCertificateEmail({ name, email, cert_id, pdf_url }) {
     </html>
   `;
 
+  // 1. Primary for Cloud / Render: Google Apps Script Relay (HTTPS port 443 — immune to cloud SMTP blocks)
+  if (gasUrl) {
+    try {
+      console.log(`[EMAIL SERVICE] Sending email for ${certId} via Google Apps Script relay...`);
+      const gasRes = await fetch(gasUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({
+          action: 'sendCertificateEmail',
+          apiKey: adminApiKey,
+          email: email.trim(),
+          name: name || 'Student',
+          certId: certId,
+          pdfUrl: certificateLink,
+          subject: 'Your Certificate – GGSIPU',
+          htmlBody: htmlContent,
+        }),
+      });
+
+      const gasData = await gasRes.json();
+      if (gasData.status === 'success') {
+        console.log(`[EMAIL SERVICE] Successfully sent email to ${email} via Google Apps Script relay!`);
+        return { messageId: 'GAS_RELAY_' + Date.now(), accepted: [email] };
+      } else {
+        console.warn(`[EMAIL SERVICE] Google Apps Script email relay returned:`, gasData);
+      }
+    } catch (gasErr) {
+      console.warn(`[EMAIL SERVICE] Google Apps Script relay error, attempting direct SMTP:`, gasErr.message || gasErr);
+    }
+  }
+
+  // 2. Direct Nodemailer SMTP Transport fallback (Port 465 Direct SSL)
+  const transporter = getEmailTransporter();
+  if (!transporter) {
+    throw new Error('Email service is not configured. Please configure GAS_API_URL or set GMAIL_USER and GMAIL_APP_PASSWORD in environment variables.');
+  }
+
+  const senderUser = process.env.GMAIL_USER;
   const mailOptions = {
     from: `"GGSIPU CertVault" <${senderUser}>`,
-    to: email,
+    to: email.trim(),
     subject: 'Your Certificate – GGSIPU',
     html: htmlContent,
   };
 
-  console.log(`[EMAIL SERVICE] Sending certificate email for ${cert_id} to ${email}...`);
+  console.log(`[EMAIL SERVICE] Sending certificate email for ${certId} to ${email} via direct Gmail SMTP (SSL:465)...`);
   const info = await transporter.sendMail(mailOptions);
   console.log(`[EMAIL SERVICE] Certificate email sent successfully to ${email} (Message ID: ${info.messageId})`);
   return info;

@@ -196,6 +196,8 @@ function doPost(e) {
       result = revokeCertificate(data.certId, data.reason, data.revokedBy);
     } else if (action === "uploadCertificatePdf") {
       result = uploadCertificatePdfToDrive(data.certId, data.pdfBase64, data.folderId);
+    } else if (action === "sendCertificateEmail") {
+      result = sendCertificateEmailViaAppsScript(data.email, data.subject, data.htmlBody, data.name, data.certId, data.pdfUrl);
     } else {
       result = { status: "error", message: "Unknown post action: " + action };
     }
@@ -205,6 +207,56 @@ function doPost(e) {
 
   return ContentService.createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Sends certificate notification email directly using Google Apps Script MailApp
+ */
+function sendCertificateEmailViaAppsScript(email, subject, htmlBody, name, certId, pdfUrl) {
+  try {
+    if (!email) {
+      return { status: "error", message: "Recipient email is required" };
+    }
+    var sub = subject || "Your Certificate – GGSIPU";
+    var link = pdfUrl || "#";
+    var html = htmlBody;
+
+    if (!html) {
+      html = '<div style="font-family:\'Segoe UI\', Arial, sans-serif; background-color:#f4f6f9; margin:0; padding:20px; color:#1e293b;">' +
+        '<div style="max-width:600px; margin:0 auto; background:#ffffff; border-radius:8px; overflow:hidden; border:1px solid #e2e8f0; box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);">' +
+        '<div style="background:#1e3a8a; padding:24px; text-align:center; color:#ffffff;">' +
+        '<h1 style="margin:0; font-size:22px;">Guru Gobind Singh Indraprastha University</h1>' +
+        '<p style="margin:6px 0 0 0; font-size:13px; color:#dbeafe;">Directorate of Students\' Welfare (DSW) &bull; CertVault</p>' +
+        '</div>' +
+        '<div style="padding:28px 24px; line-height:1.6;">' +
+        '<p>Dear <strong>' + (name || 'Student') + '</strong>,</p>' +
+        '<p>We are pleased to inform you that your official certificate has been issued and verified on the GGSIPU CertVault blockchain ledger.</p>' +
+        '<div style="background:#f8fafc; border-left:4px solid #d97706; padding:14px 18px; margin:20px 0; border-radius:4px;">' +
+        '<div style="font-size:12px; color:#64748b; margin-bottom:4px;">CERTIFICATE IDENTIFIER</div>' +
+        '<div style="font-family:monospace; font-size:15px; font-weight:bold; color:#1e3a8a;">' + (certId || 'N/A') + '</div>' +
+        '</div>' +
+        '<p>You can view, verify, and download your digital certificate directly via the link below:</p>' +
+        '<div style="text-align:center; margin:30px 0 20px 0;">' +
+        '<a href="' + link + '" style="background-color:#1e3a8a; color:#ffffff !important; padding:12px 28px; text-decoration:none; border-radius:6px; font-weight:bold; display:inline-block;" target="_blank">View Certificate</a>' +
+        '</div>' +
+        '<p style="font-size:13px; color:#64748b; margin-top:24px;">Link: <a href="' + link + '" style="color:#1e3a8a; word-break:break-all;">' + link + '</a></p>' +
+        '</div>' +
+        '<div style="padding:18px 24px; background:#f1f5f9; font-size:12px; color:#64748b; text-align:center; border-top:1px solid #e2e8f0;">' +
+        '<p>This is an automated notification from GGSIPU CertVault. Please do not reply directly.</p>' +
+        '</div></div></div>';
+    }
+
+    MailApp.sendEmail({
+      to: email,
+      subject: sub,
+      htmlBody: html,
+      name: "GGSIPU CertVault"
+    });
+
+    return { status: "success", message: "Email sent successfully to " + email };
+  } catch (err) {
+    return { status: "error", message: err.toString() };
+  }
 }
 
 /**
