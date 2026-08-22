@@ -56,6 +56,16 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/certificates', certificateRoutes);
 
+const path = require('path');
+
+// Serve frontend static files
+app.use(express.static(path.join(__dirname, '../../frontend')));
+
+// Serve index.html for the root route
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '../../frontend/index.html'));
+});
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
@@ -74,3 +84,4 @@ app.use((err, req, res, next) => {
 });
 
 module.exports = app;
+

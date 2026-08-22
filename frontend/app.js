@@ -11,8 +11,8 @@ let ADMIN_API_KEY = localStorage.getItem("GGSIPU_ADMIN_API_KEY") || "";
 const DEFAULT_SALT = "GGSIPU_SALT_2026_DSW_SECURE_HASH";
 // Authenticated Staff Session State (null when in public mode)
 let currentStaffSession = null;
-const BACKEND_API_BASE = window.location.origin.includes(':5000') ? '' : 'http://localhost:5000';
-
+//const BACKEND_API_BASE = window.location.origin.includes(':5000') ? '' : 'http://localhost:5000';
+const BACKEND_API_BASE = '';
 // Initial Pre-populated Master Ledger State (Synthetic GGSIPU Test Dataset)
 let mockLedger = [
   {
