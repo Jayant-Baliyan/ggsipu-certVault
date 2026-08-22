@@ -216,8 +216,7 @@ async function getCertificatesForEmailing(options = {}) {
   let query = `
     SELECT id, cert_id, roll_number, name, email, course, event_name, cert_type, issue_date, hash, status, pdf_url, pdf_file_id, emailed, emailed_at
     FROM certificates
-    WHERE LOWER(status) = 'approved'
-      AND pdf_url IS NOT NULL
+    WHERE pdf_url IS NOT NULL
       AND pdf_url != ''
   `;
   const params = [];
@@ -227,7 +226,7 @@ async function getCertificatesForEmailing(options = {}) {
     query += ` AND UPPER(TRIM(cert_id)) IN (${placeholders})`;
     params.push(...certIds.map(id => String(id).trim().toUpperCase()));
   } else {
-    query += ` AND (emailed IS NULL OR emailed = FALSE)`;
+    query += ` AND LOWER(status) = 'approved' AND (emailed IS NULL OR emailed = FALSE)`;
   }
 
   query += ` ORDER BY id ASC;`;

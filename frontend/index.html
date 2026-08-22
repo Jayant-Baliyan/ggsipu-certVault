@@ -452,9 +452,14 @@
       <div class="card">
         <div class="card-header">
           <h3>Pending Certificates Awaiting Approval</h3>
-          <button class="btn btn-primary" id="approve-all-selected-btn">
-            <i data-feather="check-circle"></i> Approve Selected Batch
-          </button>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn btn-primary" id="approve-all-selected-btn">
+              <i data-feather="check-circle"></i> Approve Selected Batch
+            </button>
+            <button class="btn btn-warning" id="send-emails-btn" title="Send email notifications with PDF links to approved students">
+              <i data-feather="mail"></i> Email Approved Certificates
+            </button>
+          </div>
         </div>
 
         <div class="table-responsive">

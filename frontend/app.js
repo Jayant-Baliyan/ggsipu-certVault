@@ -1240,6 +1240,11 @@ function setupApprovalQueue() {
   if (approveAllBtn) {
     approveAllBtn.addEventListener("click", approveSelectedBatch);
   }
+
+  const sendEmailsBtn = document.getElementById("send-emails-btn");
+  if (sendEmailsBtn) {
+    sendEmailsBtn.addEventListener("click", () => sendBatchCertificateEmails());
+  }
   
   const selectAllChk = document.getElementById("select-all-pending");
   if (selectAllChk) {
@@ -1248,6 +1253,52 @@ function setupApprovalQueue() {
         chk.checked = e.target.checked;
       });
     });
+  }
+}
+
+async function sendBatchCertificateEmails(specificCertIds = null) {
+  const userToken = currentStaffSession ? currentStaffSession.token : null;
+  const headers = { "Content-Type": "application/json" };
+  if (userToken) headers["Authorization"] = `Bearer ${userToken}`;
+  if (ADMIN_API_KEY) headers["x-api-key"] = ADMIN_API_KEY;
+
+  const btn = document.getElementById("send-emails-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i data-feather="loader"></i> Sending Emails...`;
+    if (window.feather) feather.replace();
+  }
+
+  showToast("Dispatching certificate notification emails via Gmail SMTP...", "info");
+
+  try {
+    const payload = specificCertIds ? { certIds: specificCertIds } : {};
+    const res = await fetch(`${BACKEND_API_BASE}/api/certificates/send-emails`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+    if (res.ok && data.success) {
+      if (data.sentCount > 0) {
+        showToast(`Email Dispatch: Sent ${data.sentCount} certificate email(s) successfully!`, "success");
+      } else {
+        showToast(data.message || "No eligible certificates to email.", "info");
+      }
+      await fetchRemoteLedger();
+    } else {
+      showToast(data.message || "Failed to send certificate emails", "danger");
+    }
+  } catch (err) {
+    console.error("Email dispatch request error:", err);
+    showToast("Network error while triggering email dispatch", "danger");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i data-feather="mail"></i> Email Approved Certificates`;
+      if (window.feather) feather.replace();
+    }
   }
 }
 
@@ -1335,6 +1386,9 @@ async function approveSingleCert(certId) {
       headers,
       body: JSON.stringify({ certId: certId }),
     });
+
+    // Auto-send certificate email to student
+    sendBatchCertificateEmails([certId]).catch(e => console.warn("Auto email error:", e));
   } catch (dbErr) {
     console.warn("NeonDB approval sync warning:", dbErr);
   }
@@ -1369,7 +1423,7 @@ async function approveSingleCert(certId) {
   renderMetrics();
   renderApprovalQueue();
   renderAuditLogs();
-  showToast(`Certificate ${certId} signed & approved!`, "success");
+  showToast(`Certificate ${certId} signed, approved & email dispatched!`, "success");
 }
 
 async function approveSelectedBatch() {
@@ -1412,7 +1466,7 @@ async function approveSelectedBatch() {
     }
   }
 
-  // Sync batch approval to NeonDB backend
+  // Sync batch approval to NeonDB backend & dispatch emails
   if (approvedIds.length > 0) {
     try {
       const userToken = currentStaffSession ? currentStaffSession.token : null;
@@ -1425,6 +1479,9 @@ async function approveSelectedBatch() {
         headers,
         body: JSON.stringify({ certIds: approvedIds }),
       });
+
+      // Auto-send emails to approved batch
+      sendBatchCertificateEmails(approvedIds).catch(e => console.warn("Batch auto email error:", e));
     } catch (dbErr) {
       console.warn("NeonDB batch approval sync error:", dbErr);
     }
@@ -1441,7 +1498,7 @@ async function approveSelectedBatch() {
   renderMetrics();
   renderApprovalQueue();
   renderAuditLogs();
-  showToast(`Approved ${approvedCount} certificates successfully!`, "success");
+  showToast(`Approved ${approvedCount} certificates and dispatched emails!`, "success");
 }
 
 // DIGITAL SIGNATURE PAD

@@ -17,33 +17,34 @@ if (!connectionString) {
 
 const isLocalhost = connectionString && (connectionString.includes('localhost') || connectionString.includes('127.0.0.1'));
 
-const resolver = new dns.Resolver();
-try {
-  resolver.setServers(['8.8.8.8', '1.1.1.1']);
-} catch (e) {}
+function getPoolConfig() {
+  if (!connectionString) return {};
+  try {
+    const parsed = new URL(connectionString);
+    const host = parsed.hostname;
+    const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
+    return {
+      user: parsed.username,
+      password: decodeURIComponent(parsed.password || ''),
+      host: host,
+      port: parseInt(parsed.port || '5432', 10),
+      database: parsed.pathname.replace(/^\//, ''),
+      ssl: isLocal || process.env.DATABASE_SSL === 'false'
+        ? false
+        : { rejectUnauthorized: false, servername: host },
+      connectionTimeoutMillis: 10000,
+    };
+  } catch (e) {
+    return {
+      connectionString,
+      ssl: isLocalhost || process.env.DATABASE_SSL === 'false'
+        ? false
+        : { rejectUnauthorized: false },
+    };
+  }
+}
 
-const pool = new Pool({
-  connectionString,
-  ssl: isLocalhost || process.env.DATABASE_SSL === 'false'
-    ? false
-    : (connectionString ? { rejectUnauthorized: false } : false),
-  lookup: (hostname, options, callback) => {
-    const cb = typeof options === 'function' ? options : callback;
-
-    dns.lookup(hostname, { family: 4 }, (err, address, family) => {
-      if (!err && address) {
-        return cb(null, address, family || 4);
-      }
-
-      dns.resolve(hostname, (resErr, addresses) => {
-        if (!resErr && addresses && addresses.length > 0) {
-          return cb(null, addresses[0], 4);
-        }
-        cb(err || resErr);
-      });
-    });
-  },
-});
+const pool = new Pool(getPoolConfig());
 
 pool.on('error', (err) => {
   console.error('[DATABASE] Unexpected error on idle PostgreSQL client:', err.message || err);
