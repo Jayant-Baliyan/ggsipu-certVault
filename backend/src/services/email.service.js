@@ -4,11 +4,18 @@ const path = require('path');
 require('dotenv').config();
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
+const dns = require('dns');
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
+
 /**
- * Creates and returns a Nodemailer transporter using direct Gmail SSL (Port 465).
- * Avoids port 587 STARTTLS hanging on cloud platforms like Render.
+ * Creates and returns a Nodemailer transporter using direct Gmail SSL (Port 465) or TLS (Port 587).
+ *
+ * @param {number} port - SMTP Port (465 or 587)
+ * @param {boolean} secure - Secure flag (true for 465, false for 587)
  */
-function getEmailTransporter() {
+function getEmailTransporter(port = 465, secure = true) {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
 
@@ -19,18 +26,22 @@ function getEmailTransporter() {
 
   return nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // Use Direct SSL on port 465
-    family: 4,   // FORCE IPv4 to prevent ENETUNREACH IPv6 routing errors on Render
+    port: port,
+    secure: secure,
     auth: {
       user: user.trim(),
       pass: pass.trim(),
+    },
+    tls: {
+      rejectUnauthorized: false,
+      servername: 'smtp.gmail.com',
     },
     connectionTimeout: 8000,
     greetingTimeout: 8000,
     socketTimeout: 10000,
   });
 }
+
 
 /**
  * Sleep helper to introduce a delay (in ms) between operations.
@@ -153,12 +164,7 @@ async function sendCertificateEmail(params = {}) {
     }
   }
 
-  // 2. Direct Nodemailer SMTP Transport fallback (Port 465 Direct SSL)
-  const transporter = getEmailTransporter();
-  if (!transporter) {
-    throw new Error('Email service is not configured. Please configure GAS_API_URL or set GMAIL_USER and GMAIL_APP_PASSWORD in environment variables.');
-  }
-
+  // 2. Direct Nodemailer SMTP Transport fallback (Port 465 Direct SSL -> Port 587 TLS)
   const senderUser = process.env.GMAIL_USER;
   const mailOptions = {
     from: `"GGSIPU CertVault" <${senderUser}>`,
@@ -167,11 +173,25 @@ async function sendCertificateEmail(params = {}) {
     html: htmlContent,
   };
 
-  console.log(`[EMAIL SERVICE] Sending certificate email for ${certId} to ${email} via direct Gmail SMTP (SSL:465)...`);
-  const info = await transporter.sendMail(mailOptions);
-  console.log(`[EMAIL SERVICE] Certificate email sent successfully to ${email} (Message ID: ${info.messageId})`);
-  return info;
+  const transporter465 = getEmailTransporter(465, true);
+  if (!transporter465) {
+    throw new Error('Email service is not configured. Please configure GAS_API_URL or set GMAIL_USER and GMAIL_APP_PASSWORD in environment variables.');
+  }
+
+  try {
+    console.log(`[EMAIL SERVICE] Sending certificate email for ${certId} to ${email} via direct Gmail SMTP (SSL:465)...`);
+    const info = await transporter465.sendMail(mailOptions);
+    console.log(`[EMAIL SERVICE] Certificate email sent successfully to ${email} (Message ID: ${info.messageId})`);
+    return info;
+  } catch (err465) {
+    console.warn(`[EMAIL SERVICE] Direct SMTP (465) failed (${err465.message}). Trying TLS (587)...`);
+    const transporter587 = getEmailTransporter(587, false);
+    const info = await transporter587.sendMail(mailOptions);
+    console.log(`[EMAIL SERVICE] Certificate email sent successfully to ${email} via TLS 587 (Message ID: ${info.messageId})`);
+    return info;
+  }
 }
+
 
 module.exports = {
   sendCertificateEmail,

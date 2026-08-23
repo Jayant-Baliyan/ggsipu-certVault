@@ -46,16 +46,28 @@ GGSIPU CertVault provides a unified, single deployment web application:
 
 ---
 
-## Step 3: Deploy as Web App (Single Deployment)
+## Step 3: Authorize Permissions & Deploy as Web App
 
-1. Click **Deploy -> New Deployment**.
-2. Select type: **Web App**.
-3. Configuration:
-   - **Description**: `GGSIPU CertVault Unified System v3.1`
-   - **Execute as**: `Me (your.email@ipu.ac.in)`
-   - **Who has access**: `Anyone` *(Ensures public verifier is accessible to anyone without friction)*
-4. Click **Deploy** and grant Google OAuth Permissions.
-5. Copy the generated **Web App URL** (e.g. `https://script.google.com/macros/s/.../exec`).
+1. **Authorize OAuth Scopes**:
+   - In the Apps Script editor, in the top toolbar dropdown (next to "Debug"), select the function **`testAuthorizeAndSendEmail`**.
+   - Click **Run ▶**.
+   - When the popup **"Authorization required"** appears:
+     - Click **Review Permissions**.
+     - Select your Google account.
+     - Click **Advanced** &rarr; **Go to ggsipu-certVault (unsafe)**.
+     - Click **Allow**.
+   - Check the Execution log at the bottom; you should see: `"Email sent successfully... via GmailApp / MailApp"`.
+
+2. **Deploy as Web App (Single Deployment)**:
+   - Click **Deploy -> New Deployment** (or **Manage Deployments -> Edit -> New Version**).
+   - Select type: **Web App**.
+   - Configuration:
+     - **Description**: `GGSIPU CertVault Unified System v3.1`
+     - **Execute as**: `Me (your.email@ipu.ac.in)` *(Required so backend relay can send emails)*
+     - **Who has access**: `Anyone` *(Ensures public verifier and backend API relay are accessible)*
+   - Click **Deploy**.
+   - Copy the generated **Web App URL** (e.g. `https://script.google.com/macros/s/.../exec`) and set it as `GAS_API_URL` in `backend/.env`.
+
 
 ---
 

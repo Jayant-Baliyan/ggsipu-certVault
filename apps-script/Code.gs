@@ -210,7 +210,7 @@ function doPost(e) {
 }
 
 /**
- * Sends certificate notification email directly using Google Apps Script MailApp
+ * Sends certificate notification email directly using Google Apps Script GmailApp or MailApp
  */
 function sendCertificateEmailViaAppsScript(email, subject, htmlBody, name, certId, pdfUrl) {
   try {
@@ -246,18 +246,62 @@ function sendCertificateEmailViaAppsScript(email, subject, htmlBody, name, certI
         '</div></div></div>';
     }
 
-    MailApp.sendEmail({
-      to: email,
-      subject: sub,
-      htmlBody: html,
-      name: "GGSIPU CertVault"
-    });
+    var errors = [];
 
-    return { status: "success", message: "Email sent successfully to " + email };
+    // Attempt 1: GmailApp (uses https://www.googleapis.com/auth/gmail.send)
+    try {
+      GmailApp.sendEmail(email, sub, "", {
+        htmlBody: html,
+        name: "GGSIPU CertVault"
+      });
+      return { status: "success", message: "Email sent successfully to " + email + " via GmailApp" };
+    } catch (gErr) {
+      errors.push("GmailApp: " + gErr.toString());
+    }
+
+    // Attempt 2: MailApp (uses https://www.googleapis.com/auth/script.send_mail)
+    try {
+      MailApp.sendEmail({
+        to: email,
+        subject: sub,
+        htmlBody: html,
+        name: "GGSIPU CertVault"
+      });
+      return { status: "success", message: "Email sent successfully to " + email + " via MailApp" };
+    } catch (mErr) {
+      errors.push("MailApp: " + mErr.toString());
+    }
+
+    return { status: "error", message: "Email dispatch failed: " + errors.join(" | ") };
   } catch (err) {
     return { status: "error", message: err.toString() };
   }
 }
+
+/**
+ * Helper function to test and grant OAuth permissions directly inside Google Apps Script editor.
+ * Run this function in Apps Script (Select 'testAuthorizeAndSendEmail' -> Click 'Run') to authorize scopes.
+ */
+function testAuthorizeAndSendEmail() {
+  var myEmail = "";
+  try {
+    myEmail = Session.getActiveUser().getEmail();
+  } catch (e) {}
+  if (!myEmail) myEmail = "admin@ipu.ac.in";
+
+  Logger.log("Testing email authorization for: " + myEmail);
+  var result = sendCertificateEmailViaAppsScript(
+    myEmail,
+    "Test Authorization – GGSIPU CertVault",
+    "<h2>GGSIPU CertVault Email Relay Operational</h2><p>OAuth permissions successfully granted.</p>",
+    "Administrator",
+    "GGSIPU-TEST-0001",
+    "https://drive.google.com"
+  );
+  Logger.log("Result: " + JSON.stringify(result));
+  return result;
+}
+
 
 /**
  * Uploads a base64 encoded PDF directly into Google Drive under user's personal quota
